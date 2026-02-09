@@ -1,0 +1,26 @@
+{
+  "name": "funding-arb-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Crypto trading bot monorepo",
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:shared": "npm run build -w packages/shared",
+    "build:backend": "npm run build -w apps/backend",
+    "build:frontend": "npm run build -w apps/frontend",
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:backend": "npm run dev -w apps/backend",
+    "dev:frontend": "npm run dev -w apps/frontend",
+    "start:backend": "npm run start -w apps/backend",
+    "start:frontend": "npm run preview -w apps/frontend",
+    "lint": "npm run lint --workspaces --if-present",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist packages/*/dist"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

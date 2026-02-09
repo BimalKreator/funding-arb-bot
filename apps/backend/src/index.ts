@@ -1,0 +1,66 @@
+import './env-setup.js';
+
+import express from 'express';
+import cors from 'cors';
+import { healthRouter } from './routes/health.js';
+import { createExchangesRouter } from './routes/exchanges.js';
+import { ExchangeManager } from './services/exchange/index.js';
+import { FundingService } from './services/funding.service.js';
+import { createFundingRouter } from './routes/funding.js';
+import { createScreenerRouter } from './routes/screener.js';
+import { createTradeRouter } from './routes/trade.js';
+import { ScreenerService } from './services/screener.service.js';
+import { TradeService } from './services/trade.service.js';
+import { config } from './config.js';
+
+const app = express();
+
+app.use(cors({ origin: config.corsOrigin }));
+app.use(express.json());
+
+app.use('/api/health', healthRouter);
+
+const fundingService = new FundingService({
+  bybitTestnet: config.exchanges.bybit.testnet,
+});
+app.use('/api/funding', createFundingRouter(fundingService));
+
+const screenerService = new ScreenerService(fundingService);
+app.use('/api/screener', createScreenerRouter(screenerService));
+
+const exchangeManager = new ExchangeManager({
+  binance:
+    config.exchanges.binance.apiKey && config.exchanges.binance.apiSecret
+      ? {
+          apiKey: config.exchanges.binance.apiKey,
+          apiSecret: config.exchanges.binance.apiSecret,
+          testnet: config.exchanges.binance.testnet,
+        }
+      : undefined,
+  bybit:
+    config.exchanges.bybit.apiKey && config.exchanges.bybit.apiSecret
+      ? {
+          apiKey: config.exchanges.bybit.apiKey,
+          apiSecret: config.exchanges.bybit.apiSecret,
+          testnet: config.exchanges.bybit.testnet,
+        }
+      : undefined,
+});
+app.use('/api/exchanges', createExchangesRouter(exchangeManager));
+
+const tradeService = new TradeService(exchangeManager);
+app.use('/api/trade', createTradeRouter(tradeService));
+
+// WebSocket endpoint placeholder for future implementation
+// app.use('/ws', wsHandler);
+
+app.get('/api', (_req, res) => {
+  res.json({ message: 'Funding Arb Bot API', version: config.version });
+});
+
+const server = app.listen(config.port, () => {
+  console.log(`Backend listening on http://localhost:${config.port}`);
+  fundingService.start();
+});
+
+export { app, server };

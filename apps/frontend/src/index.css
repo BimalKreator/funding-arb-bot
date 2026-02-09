@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply min-h-screen text-zinc-100;
+    background: linear-gradient(180deg, #000000 0%, #0a0f1e 100%);
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
