@@ -5,6 +5,7 @@ import type {
   ExchangesStatusResponse,
   OrderResult,
 } from '@funding-arb-bot/shared';
+import type { ExchangePosition } from './types.js';
 import { BinanceFuturesClient } from './BinanceFuturesClient.js';
 import { BybitFuturesClient } from './BybitFuturesClient.js';
 
@@ -118,5 +119,16 @@ export class ExchangeManager {
     };
     if (typeof trading.placeOrder !== 'function') throw new Error(`${exchangeId} does not support placeOrder`);
     return trading.placeOrder(symbol, side, quantity);
+  }
+
+  /** Get active positions for an exchange (optional symbol filter). */
+  async getPositions(exchangeId: ExchangeId, symbol?: string): Promise<ExchangePosition[]> {
+    const client = this.clients.get(exchangeId);
+    if (!client) return [];
+    const withPositions = client as ExchangeService & {
+      getPositions(symbol?: string): Promise<ExchangePosition[]>;
+    };
+    if (typeof withPositions.getPositions !== 'function') return [];
+    return withPositions.getPositions(symbol);
   }
 }

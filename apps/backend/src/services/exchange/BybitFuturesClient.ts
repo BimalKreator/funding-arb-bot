@@ -6,6 +6,7 @@ import type {
   UnifiedMarket,
   OrderResult,
 } from '@funding-arb-bot/shared';
+import type { ExchangePosition } from './types.js';
 
 /** Ensure value is a valid numeric string for API; fallback to total then "0" to avoid NaN. */
 function toValidBalance(value: string | number | undefined | null, fallback: string): string {
@@ -90,5 +91,56 @@ export class BybitFuturesClient implements ExchangeService {
     if (orderRes.retCode !== 0) throw new Error(orderRes.retMsg ?? 'Order failed');
     const orderId = (orderRes.result as { orderId?: string })?.orderId ?? '';
     return { orderId, status: 'FILLED', exchangeId: 'bybit' };
+  }
+
+  /** Fetch active positions (non-zero). USDT Perpetual (linear) with settleCoin for Unified/Standard. */
+  async getPositions(symbol?: string): Promise<ExchangePosition[]> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    const res = await this.client.getPositionInfo({
+      category: 'linear',
+      settleCoin: 'USDT',
+      ...(symbol ? { symbol } : {}),
+    });
+    if (res.retCode !== 0) throw new Error(res.retMsg ?? 'Failed to fetch positions');
+    const list = (res.result as {
+      list?: Array<{
+        symbol: string;
+        side: string;
+        size: string;
+        avgPrice: string;
+        markPrice: string;
+        liqPrice: string;
+        positionIM?: string;
+        unrealisedPnl: string;
+        updatedTime?: string;
+      }>;
+    })?.list ?? [];
+    return list
+      .filter((p) => {
+        const size = parseFloat(p.size ?? '0');
+        return Number.isFinite(size) && size > 0;
+      })
+      .map((p) => {
+        const side = String(p.side).toLowerCase() === 'buy' ? 'LONG' as const : 'SHORT' as const;
+        const quantity = parseFloat(p.size ?? '0');
+        const entryPrice = parseFloat(p.avgPrice ?? '0');
+        const markPrice = parseFloat(p.markPrice ?? '0');
+        const liquidationPrice = parseFloat(p.liqPrice ?? '0') || 0;
+        const collateral = parseFloat(p.positionIM ?? '0') || 0;
+        const unrealizedPnl = parseFloat(p.unrealisedPnl ?? '0');
+        const updatedTime = p.updatedTime != null ? parseInt(String(p.updatedTime), 10) : NaN;
+        const timestamp = Number.isFinite(updatedTime) ? updatedTime : undefined;
+        return {
+          symbol: p.symbol,
+          side,
+          quantity,
+          entryPrice,
+          markPrice,
+          liquidationPrice,
+          collateral,
+          unrealizedPnl,
+          timestamp,
+        };
+      });
   }
 }

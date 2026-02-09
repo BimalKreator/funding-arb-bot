@@ -1,5 +1,6 @@
 import type { ExchangeId, OrderResult } from '@funding-arb-bot/shared';
 import type { ExchangeManager } from './exchange/index.js';
+import type { NotificationService } from './notification.service.js';
 
 export interface ArbitrageStrategy {
   binanceSide: 'BUY' | 'SELL';
@@ -15,7 +16,10 @@ export interface ExecuteArbitrageResult {
 const ROLLBACK_ERROR = 'Trade Failed - Rolled Back';
 
 export class TradeService {
-  constructor(private readonly exchangeManager: ExchangeManager) {}
+  constructor(
+    private readonly exchangeManager: ExchangeManager,
+    private readonly notificationService?: NotificationService
+  ) {}
 
   async executeArbitrage(
     symbol: string,
@@ -44,6 +48,12 @@ export class TradeService {
     const bOk = resultB.status === 'fulfilled';
 
     if (aOk && bOk) {
+      this.notificationService?.add(
+        'SUCCESS',
+        'Trade Executed',
+        `${symbol} — Binance ${resultA.value.orderId}, Bybit ${resultB.value.orderId}`,
+        { symbol, quantity, binanceOrderId: resultA.value.orderId, bybitOrderId: resultB.value.orderId }
+      );
       return {
         success: true,
         binanceOrder: resultA.value,

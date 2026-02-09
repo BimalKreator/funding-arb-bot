@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { NotificationCenter } from './NotificationCenter';
 
 interface LayoutProps {
   children: ReactNode;
@@ -14,6 +15,7 @@ export function Layout({ children }: LayoutProps) {
           </h1>
           <nav className="flex items-center gap-4">
             <span className="text-sm text-zinc-400">Screener</span>
+            <NotificationCenter />
           </nav>
         </div>
       </header>

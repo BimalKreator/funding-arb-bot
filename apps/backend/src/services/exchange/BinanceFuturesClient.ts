@@ -6,6 +6,7 @@ import type {
   UnifiedMarket,
   OrderResult,
 } from '@funding-arb-bot/shared';
+import type { ExchangePosition } from './types.js';
 
 /** Ensure value is a valid numeric string for API; fallback to total then "0" to avoid NaN. */
 function toValidBalance(value: string | number | undefined | null, fallback: string): string {
@@ -75,5 +76,39 @@ export class BinanceFuturesClient implements ExchangeService {
     });
     const orderId = String((res as { orderId?: number }).orderId ?? '');
     return { orderId, status: 'FILLED', exchangeId: 'binance' };
+  }
+
+  /** Fetch active positions (non-zero). */
+  async getPositions(symbol?: string): Promise<ExchangePosition[]> {
+    if (!this.client) throw new Error('Binance client not configured');
+    const list = await this.client.getPositionsV3(symbol ? { symbol } : undefined);
+    return list
+      .filter((p) => {
+        const amt = parseFloat(String(p.positionAmt ?? 0));
+        return Number.isFinite(amt) && amt !== 0;
+      })
+      .map((p) => {
+        const amt = parseFloat(String(p.positionAmt ?? 0));
+        const side = amt > 0 ? 'LONG' as const : 'SHORT' as const;
+        const quantity = Math.abs(amt);
+        const entryPrice = parseFloat(String(p.entryPrice ?? 0));
+        const markPrice = parseFloat(String(p.markPrice ?? 0));
+        const liquidationPrice = parseFloat(String(p.liquidationPrice ?? 0));
+        const collateral = parseFloat(String(p.initialMargin ?? 0));
+        const unrealizedPnl = parseFloat(String(p.unRealizedProfit ?? 0));
+        const updateTime = p.updateTime != null ? Number(p.updateTime) : undefined;
+        const timestamp = Number.isFinite(updateTime) ? updateTime : undefined;
+        return {
+          symbol: p.symbol,
+          side,
+          quantity,
+          entryPrice,
+          markPrice,
+          liquidationPrice,
+          collateral,
+          unrealizedPnl,
+          timestamp,
+        };
+      });
   }
 }

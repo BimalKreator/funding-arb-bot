@@ -9,8 +9,13 @@ import { FundingService } from './services/funding.service.js';
 import { createFundingRouter } from './routes/funding.js';
 import { createScreenerRouter } from './routes/screener.js';
 import { createTradeRouter } from './routes/trade.js';
+import { createPositionsRouter } from './routes/positions.js';
 import { ScreenerService } from './services/screener.service.js';
 import { TradeService } from './services/trade.service.js';
+import { PositionService } from './services/position.service.js';
+import { AutoExitService } from './services/auto-exit.service.js';
+import { NotificationService } from './services/notification.service.js';
+import { createNotificationsRouter } from './routes/notifications.js';
 import { config } from './config.js';
 
 const app = express();
@@ -48,8 +53,17 @@ const exchangeManager = new ExchangeManager({
 });
 app.use('/api/exchanges', createExchangesRouter(exchangeManager));
 
-const tradeService = new TradeService(exchangeManager);
+const notificationService = new NotificationService();
+const tradeService = new TradeService(exchangeManager, notificationService);
 app.use('/api/trade', createTradeRouter(tradeService));
+
+const positionService = new PositionService(exchangeManager, fundingService);
+app.use('/api/positions', createPositionsRouter(positionService));
+
+const autoExitService = new AutoExitService(positionService, notificationService);
+autoExitService.start();
+
+app.use('/api/notifications', createNotificationsRouter(notificationService));
 
 // WebSocket endpoint placeholder for future implementation
 // app.use('/ws', wsHandler);
