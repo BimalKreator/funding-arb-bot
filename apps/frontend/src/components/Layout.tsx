@@ -11,7 +11,7 @@ export function Layout({ children }: LayoutProps) {
       <header className="sticky top-0 z-10 border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2 sm:px-6 lg:px-8">
           <div className="flex max-w-[300px] shrink-0 items-center">
-            <img src="/logo.png" alt="Logo" className="h-8 w-full object-contain object-left" />
+            <img src="/logo.png" alt="Logo" className="h-12 w-full object-contain object-left" />
           </div>
           <nav className="flex flex-wrap items-center gap-4">
             <span className="text-sm text-zinc-400">Arbitrage Bot</span>

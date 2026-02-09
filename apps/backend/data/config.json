@@ -1,7 +1,7 @@
 {
-  "autoEntryEnabled": false,
+  "autoEntryEnabled": true,
   "autoExitEnabled": true,
   "manualEntryEnabled": true,
-  "capitalPercent": 0.4,
+  "capitalPercent": 0.3,
   "autoLeverage": 1
 }
