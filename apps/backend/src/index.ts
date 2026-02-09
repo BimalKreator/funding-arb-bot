@@ -60,7 +60,11 @@ app.use('/api/trade', createTradeRouter(tradeService));
 const positionService = new PositionService(exchangeManager, fundingService);
 app.use('/api/positions', createPositionsRouter(positionService));
 
-const autoExitService = new AutoExitService(positionService, notificationService);
+const autoExitService = new AutoExitService(
+  positionService,
+  notificationService,
+  fundingService
+);
 autoExitService.start();
 
 app.use('/api/notifications', createNotificationsRouter(notificationService));

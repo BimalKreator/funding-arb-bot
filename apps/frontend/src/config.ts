@@ -1,5 +1,5 @@
 /**
- * API base URL for backend (hardcoded for production).
+ * API base URL for backend (domain proxy via Nginx).
  * All fetch calls use this base, e.g. fetch(`${API_BASE}/screener?threshold=...`)
  */
-export const API_BASE = 'http://139.180.199.7:3001/api';
+export const API_BASE = 'https://tradeictearner.online/api';
