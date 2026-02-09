@@ -14,6 +14,7 @@ import { ScreenerService } from './services/screener.service.js';
 import { TradeService } from './services/trade.service.js';
 import { PositionService } from './services/position.service.js';
 import { AutoExitService } from './services/auto-exit.service.js';
+import { AutoEntryService } from './services/auto-entry.service.js';
 import { NotificationService } from './services/notification.service.js';
 import { createNotificationsRouter } from './routes/notifications.js';
 import { createStatsRouter } from './routes/stats.js';
@@ -71,6 +72,14 @@ const autoExitService = new AutoExitService(
   fundingService
 );
 autoExitService.start();
+
+const autoEntryService = new AutoEntryService(
+  exchangeManager,
+  positionService,
+  screenerService,
+  tradeService
+);
+autoEntryService.startMonitoring();
 
 app.use('/api/notifications', createNotificationsRouter(notificationService));
 
