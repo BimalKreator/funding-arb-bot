@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { HealthResponse } from '@funding-arb-bot/shared';
-
-const API_BASE = '/api';
+import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 export function Dashboard() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/health`)
+    apiFetch(`${API_BASE}/health`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: HealthResponse) => {
         setHealth(data);

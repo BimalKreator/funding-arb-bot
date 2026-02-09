@@ -2,6 +2,8 @@ import './env-setup.js';
 
 import express from 'express';
 import cors from 'cors';
+import { authenticateToken } from './middleware/auth.middleware.js';
+import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
 import { createExchangesRouter } from './routes/exchanges.js';
 import { ExchangeManager } from './services/exchange/index.js';
@@ -31,7 +33,14 @@ const app = express();
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json());
 
+// Protect all /api/* except POST /api/auth/login
+app.use('/api', (req, res, next) => {
+  if (req.path === '/auth/login' && req.method === 'POST') return next();
+  authenticateToken(req, res, next);
+});
+
 app.use('/api/health', healthRouter);
+app.use('/api/auth', authRouter);
 
 const fundingService = new FundingService({
   bybitTestnet: config.exchanges.bybit.testnet,

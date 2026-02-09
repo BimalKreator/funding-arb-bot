@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 import type { ExchangeStatusResponse } from '../types/screener';
 
 export interface TradeModalProps {
@@ -53,7 +54,7 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
   useEffect(() => {
     let cancelled = false;
     setBalancesLoading(true);
-    fetch(`${API_BASE}/exchanges/status`)
+    apiFetch(`${API_BASE}/exchanges/status`)
       .then((res) => res.json())
       .then((data: ExchangeStatusResponse) => {
         if (cancelled) return;
@@ -76,7 +77,7 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
     const binanceSide = binanceAction === 'LONG' ? 'BUY' : 'SELL';
     const bybitSide = bybitAction === 'LONG' ? 'BUY' : 'SELL';
     try {
-      const res = await fetch(`${API_BASE}/trade`, {
+      const res = await apiFetch(`${API_BASE}/trade`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

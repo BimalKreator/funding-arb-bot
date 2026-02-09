@@ -1,8 +1,14 @@
 import type { ReactNode } from 'react';
+import { LogOut } from 'lucide-react';
 import { NotificationCenter } from './NotificationCenter';
 
 interface LayoutProps {
   children: ReactNode;
+}
+
+function handleLogout() {
+  localStorage.removeItem('token');
+  window.location.reload();
 }
 
 export function Layout({ children }: LayoutProps) {
@@ -16,6 +22,15 @@ export function Layout({ children }: LayoutProps) {
           <nav className="flex flex-wrap items-center gap-4">
             <span className="text-sm text-zinc-400">Arbitrage Bot</span>
             <NotificationCenter />
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"
+              title="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
           </nav>
         </div>
       </header>

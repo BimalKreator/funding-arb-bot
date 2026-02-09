@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 export interface BotConfig {
   autoEntryEnabled: boolean;
@@ -23,7 +24,7 @@ export function SettingsPanel() {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/config`);
+      const res = await apiFetch(`${API_BASE}/config`);
       if (!res.ok) throw new Error(res.statusText);
       const json: BotConfig = await res.json();
       setConfig(json);
@@ -42,7 +43,7 @@ export function SettingsPanel() {
   const updateBackend = useCallback(async (partial: Partial<BotConfig>) => {
     setSaving('updating');
     try {
-      const res = await fetch(`${API_BASE}/config`, {
+      const res = await apiFetch(`${API_BASE}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(partial),

@@ -1,23 +1,18 @@
 import { Router } from 'express';
 import { login } from '../services/auth.service.js';
 
-export function createAuthRouter(): Router {
-  const router = Router();
+export const authRouter = Router();
 
-  router.post('/login', (req, res) => {
-    const email = req.body?.email;
-    const password = req.body?.password;
-    if (typeof email !== 'string' || typeof password !== 'string') {
-      res.status(400).json({ error: 'Email and password required' });
-      return;
-    }
-    const result = login(email, password);
-    if (!result) {
-      res.status(401).json({ error: 'Invalid Credentials' });
-      return;
-    }
-    res.json(result);
-  });
-
-  return router;
-}
+authRouter.post('/login', (req, res) => {
+  const { email, password } = req.body ?? {};
+  if (!email || !password) {
+    res.status(400).json({ error: 'Bad Request', message: 'email and password required' });
+    return;
+  }
+  const result = login(String(email).trim(), String(password));
+  if (!result) {
+    res.status(401).json({ error: 'Invalid Credentials', message: 'Invalid Credentials' });
+    return;
+  }
+  res.json(result);
+});

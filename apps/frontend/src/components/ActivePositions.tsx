@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { RefreshCw, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 const POLL_MS = 3000;
 
@@ -53,7 +54,7 @@ export function ActivePositions() {
 
   const fetchPositions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/positions`);
+      const res = await apiFetch(`${API_BASE}/positions`);
       if (!res.ok) throw new Error(res.statusText);
       const json: PositionGroup[] = await res.json();
       setData(json);
@@ -84,7 +85,7 @@ export function ActivePositions() {
   const handleClose = async (symbol: string) => {
     setClosingSymbol(symbol);
     try {
-      const res = await fetch(`${API_BASE}/positions/close`, {
+      const res = await apiFetch(`${API_BASE}/positions/close`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol }),

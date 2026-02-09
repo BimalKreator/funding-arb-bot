@@ -3,6 +3,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   version: process.env.npm_package_version || '1.0.0',
+  jwtSecret: process.env.JWT_SECRET || 'funding-arb-bot-secret-change-in-production',
   exchanges: {
     binance: {
       apiKey: process.env.BINANCE_API_KEY ?? '',

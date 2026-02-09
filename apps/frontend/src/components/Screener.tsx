@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, ChevronLeft, ChevronRight, TrendingUp, Circle } from 'lucide-react';
 import type { ScreenerResultEntry } from '../types/screener';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 import { TradeModal } from './TradeModal';
 
 const POLL_MS = 3000;
@@ -60,7 +61,7 @@ export function Screener() {
 
   const fetchPositions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/positions`);
+      const res = await apiFetch(`${API_BASE}/positions`);
       if (!res.ok) return;
       const json: Array<{ symbol: string }> = await res.json();
       setActivePositionSymbols(new Set(json.map((p) => p.symbol)));
@@ -71,7 +72,7 @@ export function Screener() {
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/config`);
+      const res = await apiFetch(`${API_BASE}/config`);
       if (!res.ok) return;
       const json: BotConfig = await res.json();
       setConfig(json);
@@ -82,7 +83,7 @@ export function Screener() {
 
   const fetchScreener = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/screener?threshold=${threshold}`);
+      const res = await apiFetch(`${API_BASE}/screener?threshold=${threshold}`);
       if (!res.ok) throw new Error(res.statusText);
       const json: ScreenerResultEntry[] = await res.json();
       setData(json);

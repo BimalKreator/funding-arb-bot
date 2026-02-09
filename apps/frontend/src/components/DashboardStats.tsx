@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 const POLL_MS = 5000;
 
@@ -25,7 +26,7 @@ export function DashboardStats() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/stats`);
+      const res = await apiFetch(`${API_BASE}/stats`);
       if (!res.ok) throw new Error(res.statusText);
       const json: StatsData = await res.json();
       setStats(json);

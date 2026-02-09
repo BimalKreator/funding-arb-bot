@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Bell } from 'lucide-react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 const POLL_MS = 5000;
 const TOAST_DURATION_MS = 4000;
@@ -55,7 +56,7 @@ export function NotificationCenter() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/notifications`);
+      const res = await apiFetch(`${API_BASE}/notifications`);
       if (!res.ok) return;
       const json: NotificationItem[] = await res.json();
       setList(json);

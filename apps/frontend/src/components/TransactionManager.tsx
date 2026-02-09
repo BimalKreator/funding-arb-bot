@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { API_BASE } from '../config';
+import { apiFetch } from '../api';
 
 export interface TransactionItem {
   id: string;
@@ -32,7 +33,7 @@ export function TransactionManager() {
 
   const fetchTransactions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/transactions`);
+      const res = await apiFetch(`${API_BASE}/transactions`);
       if (!res.ok) throw new Error(res.statusText);
       const json: TransactionItem[] = await res.json();
       setList(json);
@@ -54,7 +55,7 @@ export function TransactionManager() {
     const amount = addForm.amount;
     if (!Number.isFinite(amount) || amount < 0) return;
     try {
-      const res = await fetch(`${API_BASE}/transactions`, {
+      const res = await apiFetch(`${API_BASE}/transactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -82,7 +83,7 @@ export function TransactionManager() {
     if (!editingId) return;
     const amount = typeof editForm.amount === 'number' ? editForm.amount : parseFloat(String(editForm.amount));
     try {
-      const res = await fetch(`${API_BASE}/transactions/${editingId}`, {
+      const res = await apiFetch(`${API_BASE}/transactions/${editingId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,7 +105,7 @@ export function TransactionManager() {
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this transaction?')) return;
     try {
-      const res = await fetch(`${API_BASE}/transactions/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_BASE}/transactions/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(res.statusText);
       await fetchTransactions();
     } catch (_) {
