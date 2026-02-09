@@ -1,12 +1,16 @@
 import { Layout } from './components/Layout';
-import { Screener } from './components/Screener';
+import { DashboardStats } from './components/DashboardStats';
 import { ActivePositions } from './components/ActivePositions';
+import { Screener } from './components/Screener';
+import { TransactionManager } from './components/TransactionManager';
 
 function App() {
   return (
     <Layout>
+      <DashboardStats />
       <ActivePositions />
       <Screener />
+      <TransactionManager />
     </Layout>
   );
 }

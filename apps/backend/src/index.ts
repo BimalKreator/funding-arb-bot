@@ -16,7 +16,12 @@ import { PositionService } from './services/position.service.js';
 import { AutoExitService } from './services/auto-exit.service.js';
 import { NotificationService } from './services/notification.service.js';
 import { createNotificationsRouter } from './routes/notifications.js';
+import { createStatsRouter } from './routes/stats.js';
+import { createTransactionsRouter } from './routes/transactions.js';
+import { BalanceService } from './services/balance.service.js';
 import { config } from './config.js';
+
+const HOUR_MS = 60 * 60 * 1000;
 
 const app = express();
 
@@ -68,6 +73,12 @@ const autoExitService = new AutoExitService(
 autoExitService.start();
 
 app.use('/api/notifications', createNotificationsRouter(notificationService));
+
+const balanceService = new BalanceService(exchangeManager);
+app.use('/api/stats', createStatsRouter(balanceService));
+app.use('/api/transactions', createTransactionsRouter(balanceService));
+
+setInterval(() => balanceService.runMidnightSnapshotIfNeeded(), HOUR_MS);
 
 // WebSocket endpoint placeholder for future implementation
 // app.use('/ws', wsHandler);
