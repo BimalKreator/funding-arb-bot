@@ -28,6 +28,8 @@ export interface StatsResponse {
   totalWithdrawals: number;
   growthAmt: number;
   growthPercent: number;
+  dailyAvgRoi: number;
+  monthlyAvgRoi: number;
   breakdown: {
     binance: { bal: number; margin: number; free: number };
     bybit: { bal: number; margin: number; free: number };
@@ -97,22 +99,30 @@ export class BalanceService {
   async getStats(): Promise<StatsResponse> {
     const status = await this.exchangeManager.getStatus();
     let binanceBal = 0,
-      binanceFree = 0;
+      binanceFree = 0,
+      binanceMargin = 0;
     let bybitBal = 0,
-      bybitFree = 0;
+      bybitFree = 0,
+      bybitMargin = 0;
 
     for (const ex of status.exchanges) {
       const usdt = ex.balances?.find((b) => b.asset.toUpperCase() === 'USDT');
       const total = usdt ? parseFloat(usdt.total) : 0;
       const available = usdt ? parseFloat(usdt.available) : 0;
-      const locked = usdt ? parseFloat(usdt.locked) : 0;
       if (ex.exchangeId === 'binance') {
         binanceBal = total;
         binanceFree = available;
+        binanceMargin = total - available;
       }
       if (ex.exchangeId === 'bybit') {
         bybitBal = total;
         bybitFree = available;
+        if (usdt?.usedMargin != null && usdt.usedMargin !== '') {
+          const v = parseFloat(usdt.usedMargin);
+          bybitMargin = Number.isFinite(v) ? v : total - available;
+        } else {
+          bybitMargin = total - available;
+        }
       }
     }
 
@@ -134,6 +144,21 @@ export class BalanceService {
     const growthPercent =
       openingBalance > 0 ? (growthAmt * 100) / openingBalance : 0;
 
+    const hist = await this.getBalanceHistory();
+    const dates = Object.keys(hist).filter((d) => d && hist[d] != null).sort();
+    let dailyAvgRoi = 0;
+    let monthlyAvgRoi = 0;
+    if (dates.length >= 2) {
+      const rois: number[] = [];
+      for (let i = 1; i < dates.length; i++) {
+        const openVal = Number(hist[dates[i - 1]]) || 0;
+        const closeVal = Number(hist[dates[i]]) || 0;
+        if (openVal > 0) rois.push(((closeVal - openVal) / openVal) * 100);
+      }
+      dailyAvgRoi = rois.length > 0 ? rois.reduce((a, b) => a + b, 0) / rois.length : 0;
+      monthlyAvgRoi = dailyAvgRoi * 30;
+    }
+
     return {
       currentBalance,
       openingBalance,
@@ -141,15 +166,17 @@ export class BalanceService {
       totalWithdrawals,
       growthAmt,
       growthPercent,
+      dailyAvgRoi,
+      monthlyAvgRoi,
       breakdown: {
         binance: {
           bal: binanceBal,
-          margin: binanceBal - binanceFree,
+          margin: binanceMargin,
           free: binanceFree,
         },
         bybit: {
           bal: bybitBal,
-          margin: bybitBal - bybitFree,
+          margin: bybitMargin,
           free: bybitFree,
         },
       },

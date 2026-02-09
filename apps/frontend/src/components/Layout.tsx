@@ -10,9 +10,12 @@ export function Layout({ children }: LayoutProps) {
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <h1 className="text-lg font-semibold text-white sm:text-xl">
-            Funding Arb Bot
-          </h1>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="Logo" className="h-8 w-8 object-contain" />
+            <h1 className="text-lg font-semibold text-white sm:text-xl">
+              Tradeict Earner
+            </h1>
+          </div>
           <nav className="flex items-center gap-4">
             <span className="text-sm text-zinc-400">Screener</span>
             <NotificationCenter />

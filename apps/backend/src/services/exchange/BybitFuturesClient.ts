@@ -41,9 +41,15 @@ export class BybitFuturesClient implements ExchangeService {
     if (res.retCode !== 0) {
       throw new Error(res.retMsg ?? 'Failed to fetch Bybit wallet balance');
     }
-    const list = res.result?.list ?? [];
+    const list = (res.result?.list ?? []) as Array<{
+      totalInitialMargin?: string;
+      totalMarginBalance?: string;
+      coin?: Array<{ coin: string; walletBalance?: string; availableToWithdraw?: string; free?: string }>;
+    }>;
     const balances: UnifiedBalance[] = [];
     for (const account of list) {
+      const accountUsedMargin =
+        account.totalInitialMargin ?? account.totalMarginBalance;
       for (const coin of account.coin ?? []) {
         const totalRaw = coin.walletBalance ?? '0';
         const total = toValidBalance(totalRaw, '0');
@@ -51,11 +57,16 @@ export class BybitFuturesClient implements ExchangeService {
         const available = toValidBalance(availableRaw, total);
         const lockedNum = parseFloat(total) - parseFloat(available);
         const locked = Number.isFinite(lockedNum) ? Math.max(0, lockedNum).toFixed(8) : '0.00000000';
+        let usedMargin: string | undefined;
+        if (coin.coin === 'USDT' && accountUsedMargin != null && accountUsedMargin !== '') {
+          usedMargin = toValidBalance(accountUsedMargin, locked);
+        }
         balances.push({
           asset: coin.coin,
           available,
           locked,
           total,
+          ...(usedMargin !== undefined ? { usedMargin } : {}),
         });
       }
     }

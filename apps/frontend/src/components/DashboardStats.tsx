@@ -10,6 +10,8 @@ export interface StatsData {
   totalWithdrawals: number;
   growthAmt: number;
   growthPercent: number;
+  dailyAvgRoi: number;
+  monthlyAvgRoi: number;
   breakdown: {
     binance: { bal: number; margin: number; free: number };
     bybit: { bal: number; margin: number; free: number };
@@ -76,10 +78,16 @@ export function DashboardStats() {
           <div className="mt-1 text-xs text-zinc-500">
             Today&apos;s Opening: ${s.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <div className="mt-0.5 text-xs text-[#22c55e]">
+            Today&apos;s Deposits: +${s.totalDeposits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="mt-0.5 text-xs text-[#ef4444]">
+            Today&apos;s Withdrawals: -${s.totalWithdrawals.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur-sm">
-          <div className="text-sm text-zinc-400">Today&apos;s Growth</div>
+          <div className="text-sm text-zinc-400">Growth & ROI</div>
           <div
             className={`mt-1 text-2xl font-bold sm:text-3xl ${
               growthPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
@@ -89,8 +97,12 @@ export function DashboardStats() {
             {s.growthPercent.toFixed(2)}%
           </div>
           <div className="mt-1 text-xs text-zinc-500">
-            {s.growthAmt >= 0 ? '+' : ''}$
+            Today&apos;s Growth Amt: {s.growthAmt >= 0 ? '+' : ''}$
             {s.growthAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="mt-3 border-t border-white/10 pt-3">
+            <div className="text-xs text-zinc-400">Daily Avg ROI: {s.dailyAvgRoi.toFixed(2)}%</div>
+            <div className="mt-0.5 text-xs text-zinc-400">Monthly Avg ROI: {s.monthlyAvgRoi.toFixed(2)}%</div>
           </div>
         </div>
 

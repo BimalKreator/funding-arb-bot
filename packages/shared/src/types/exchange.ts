@@ -11,6 +11,8 @@ export interface UnifiedBalance {
   available: string;
   locked: string;
   total: string;
+  /** Optional: used margin from exchange (e.g. Bybit totalInitialMargin). */
+  usedMargin?: string;
 }
 
 /** Unified market (USDT-margined perps only) */

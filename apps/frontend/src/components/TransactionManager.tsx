@@ -24,7 +24,7 @@ export function TransactionManager() {
     date: todayLocal(),
     exchange: 'binance',
     type: 'DEPOSIT' as 'DEPOSIT' | 'WITHDRAWAL',
-    amount: '',
+    amount: 0 as number,
     remark: '',
   });
 
@@ -51,7 +51,7 @@ export function TransactionManager() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amount = parseFloat(addForm.amount);
+    const amount = addForm.amount;
     if (!Number.isFinite(amount) || amount < 0) return;
     try {
       const res = await fetch(`${API_BASE}/transactions`, {
@@ -66,7 +66,7 @@ export function TransactionManager() {
         }),
       });
       if (!res.ok) throw new Error(res.statusText);
-      setAddForm({ ...addForm, amount: '', remark: '' });
+      setAddForm({ ...addForm, amount: 0, remark: '' });
       await fetchTransactions();
     } catch (_) {
       // ignore
@@ -156,8 +156,13 @@ export function TransactionManager() {
               type="number"
               step="0.01"
               min="0"
-              value={addForm.amount}
-              onChange={(e) => setAddForm((f) => ({ ...f, amount: e.target.value }))}
+              value={addForm.amount === 0 ? '' : addForm.amount}
+              onChange={(e) =>
+                setAddForm((f) => ({
+                  ...f,
+                  amount: e.target.value === '' ? 0 : parseFloat(e.target.value),
+                }))
+              }
               className="w-28 rounded border border-white/10 bg-white/5 px-3 py-2 text-white"
               required
             />
@@ -234,7 +239,12 @@ export function TransactionManager() {
                             type="number"
                             step="0.01"
                             value={editForm.amount ?? ''}
-                            onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((f) => ({
+                                ...f,
+                                amount: e.target.value === '' ? 0 : parseFloat(e.target.value),
+                              }))
+                            }
                             className="w-24 rounded border border-white/10 bg-white/5 px-2 py-1 text-white text-xs"
                           />
                           <input
