@@ -22,6 +22,8 @@ export interface PositionGroup {
   totalPnl: number;
   netFundingFee: number;
   legs: PositionLeg[];
+  isHedged: boolean;
+  isFundingFlipped: boolean;
 }
 
 function symbolShort(symbol: string): string {
@@ -177,7 +179,21 @@ export function ActivePositions() {
                             </button>
                           </td>
                           <td className="px-4 py-3 font-medium text-white">
-                            {symbolShort(group.symbol)}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{symbolShort(group.symbol)}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                                  group.isHedged ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                }`}
+                              >
+                                {group.isHedged ? 'Hedged' : 'Unhedged'}
+                              </span>
+                              {group.isFundingFlipped && (
+                                <span className="animate-pulse rounded bg-red-500/30 px-1.5 py-0.5 text-xs font-medium text-red-400">
+                                  Funding Flipped
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-zinc-300">
                             {group.legs.length > 0

@@ -38,6 +38,28 @@ export interface PositionGroup {
   totalPnl: number;
   netFundingFee: number;
   legs: PositionLeg[];
+  /** True if binance and bybit quantities match within dust (< 1). */
+  isHedged: boolean;
+  /** True if net spread <= 0 and within 10 min of next funding. */
+  isFundingFlipped: boolean;
+}
+
+const HEDGE_DUST = 1;
+const WINDOW_BEFORE_FUNDING_MS = 10 * 60 * 1000;
+
+/** Ms from now until next funding (UTC 00:00, 08:00, 16:00). */
+function getMsUntilNextFundingUTC(): number {
+  const now = new Date();
+  const utcMin =
+    now.getUTCHours() * 60 +
+    now.getUTCMinutes() +
+    now.getUTCSeconds() / 60 +
+    now.getUTCMilliseconds() / 60000;
+  const slots = [0, 8 * 60, 16 * 60];
+  for (const slot of slots) {
+    if (slot > utcMin) return (slot - utcMin) * 60 * 1000;
+  }
+  return (24 * 60 - utcMin) * 60 * 1000;
 }
 
 export class PositionService {
@@ -110,15 +132,48 @@ export class PositionService {
     }
 
     const result: PositionGroup[] = [];
+    const msUntilFunding = getMsUntilNextFundingUTC();
+    const withinFundingWindow = msUntilFunding <= WINDOW_BEFORE_FUNDING_MS && msUntilFunding >= 0;
+
     for (const [symbol, legs] of legsBySymbol) {
       if (legs.length === 0) continue;
       const totalPnl = legs.reduce((s, l) => s + l.unrealizedPnl, 0);
       const netFundingFee = legs.reduce((s, l) => s + l.estFundingFee, 0);
+      const binanceLeg = legs.find((l) => l.exchange === 'binance');
+      const bybitLeg = legs.find((l) => l.exchange === 'bybit');
+      const binanceQty = binanceLeg?.size ?? 0;
+      const bybitQty = bybitLeg?.size ?? 0;
+      const isHedged =
+        binanceLeg != null &&
+        bybitLeg != null &&
+        Math.abs(binanceQty - bybitQty) < HEDGE_DUST;
+
+      let netSpread = 0;
+      const entry = fundingRates.get(symbol);
+      const binanceRateStr = entry?.binance?.fundingRate;
+      const bybitRateStr = entry?.bybit?.fundingRate;
+      if (
+        binanceLeg &&
+        bybitLeg &&
+        binanceRateStr != null &&
+        bybitRateStr != null
+      ) {
+        const binanceRate = parseFloat(binanceRateStr);
+        const bybitRate = parseFloat(bybitRateStr);
+        if (Number.isFinite(binanceRate) && Number.isFinite(bybitRate)) {
+          netSpread =
+            binanceLeg.side === 'LONG' ? bybitRate - binanceRate : binanceRate - bybitRate;
+        }
+      }
+      const isFundingFlipped = withinFundingWindow && netSpread <= 0;
+
       result.push({
         symbol,
         totalPnl,
         netFundingFee,
         legs,
+        isHedged,
+        isFundingFlipped,
       });
     }
 

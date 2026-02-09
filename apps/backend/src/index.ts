@@ -20,6 +20,8 @@ import { createNotificationsRouter } from './routes/notifications.js';
 import { createStatsRouter } from './routes/stats.js';
 import { createTransactionsRouter } from './routes/transactions.js';
 import { BalanceService } from './services/balance.service.js';
+import { ConfigService } from './services/config.service.js';
+import { createConfigRouter } from './routes/config.js';
 import { config } from './config.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -66,7 +68,11 @@ app.use('/api/trade', createTradeRouter(tradeService));
 const positionService = new PositionService(exchangeManager, fundingService);
 app.use('/api/positions', createPositionsRouter(positionService));
 
+const configService = new ConfigService();
+app.use('/api/config', createConfigRouter(configService));
+
 const autoExitService = new AutoExitService(
+  configService,
   positionService,
   notificationService,
   fundingService
@@ -74,6 +80,7 @@ const autoExitService = new AutoExitService(
 autoExitService.start();
 
 const autoEntryService = new AutoEntryService(
+  configService,
   exchangeManager,
   positionService,
   screenerService,

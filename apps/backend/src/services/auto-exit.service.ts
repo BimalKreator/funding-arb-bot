@@ -1,3 +1,4 @@
+import type { ConfigService } from './config.service.js';
 import type { PositionService } from './position.service.js';
 import type { NotificationService } from './notification.service.js';
 import type { FundingService } from './funding.service.js';
@@ -27,6 +28,7 @@ export class AutoExitService {
   private fundingFlipIntervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(
+    private readonly configService: ConfigService,
     private readonly positionService: PositionService,
     private readonly notificationService?: NotificationService,
     private readonly fundingService?: FundingService
@@ -53,6 +55,8 @@ export class AutoExitService {
 
   private async run(): Promise<void> {
     try {
+      const cfg = await this.configService.getConfig();
+      if (!cfg.autoExitEnabled) return;
       const groups = await this.positionService.getPositions();
       const now = Date.now();
 
@@ -100,6 +104,8 @@ export class AutoExitService {
    * Funding flip protection: if we're within 10 min of next funding and predicted net spread <= 0, exit.
    */
   async checkFundingFlips(): Promise<void> {
+    const cfg = await this.configService.getConfig();
+    if (!cfg.autoExitEnabled) return;
     if (!this.fundingService) return;
     try {
       const msUntilFunding = getMsUntilNextFundingUTC();

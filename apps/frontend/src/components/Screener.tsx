@@ -7,6 +7,14 @@ import { TradeModal } from './TradeModal';
 const POLL_MS = 3000;
 const PAGE_SIZE = 10;
 
+export interface BotConfig {
+  autoEntryEnabled: boolean;
+  autoExitEnabled: boolean;
+  manualEntryEnabled: boolean;
+  capitalPercent: number;
+  autoLeverage: number;
+}
+
 /** Rates and spreads from API are already in percentage (e.g. 0.01 = 0.01%) */
 function formatPct(rate: number): string {
   return `${rate.toFixed(4)}%`;
@@ -47,6 +55,30 @@ export function Screener() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [tradeRow, setTradeRow] = useState<ScreenerResultEntry | null>(null);
+  const [activePositionSymbols, setActivePositionSymbols] = useState<Set<string>>(new Set());
+  const [config, setConfig] = useState<BotConfig | null>(null);
+
+  const fetchPositions = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/positions`);
+      if (!res.ok) return;
+      const json: Array<{ symbol: string }> = await res.json();
+      setActivePositionSymbols(new Set(json.map((p) => p.symbol)));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/config`);
+      if (!res.ok) return;
+      const json: BotConfig = await res.json();
+      setConfig(json);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const fetchScreener = useCallback(async () => {
     try {
@@ -69,9 +101,21 @@ export function Screener() {
     return () => clearInterval(id);
   }, [fetchScreener]);
 
+  useEffect(() => {
+    fetchPositions();
+    fetchConfig();
+    const id = setInterval(() => {
+      fetchPositions();
+      fetchConfig();
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [fetchPositions, fetchConfig]);
+
   const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
   const slice = data.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const nextSymbol = data.find((row) => !activePositionSymbols.has(row.symbol) && row.netSpread > 0)?.symbol ?? null;
+  const manualEntryEnabled = config?.manualEntryEnabled ?? true;
 
   return (
     <div className="font-sans">
@@ -148,13 +192,30 @@ export function Screener() {
                     </td>
                   </tr>
                 ) : (
-                  slice.map((row) => (
+                  slice.map((row) => {
+                    const isActive = activePositionSymbols.has(row.symbol);
+                    const isNext = nextSymbol === row.symbol;
+                    return (
                     <tr
                       key={row.symbol}
-                      className="border-b border-white/5 transition-colors hover:bg-white/5"
+                      className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
+                        isActive ? 'bg-green-500/10' : ''
+                      }`}
                     >
                       <td className="px-4 py-3 font-medium text-white">
-                        {symbolShort(row.symbol)}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{symbolShort(row.symbol)}</span>
+                          {isActive && (
+                            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-xs font-medium text-green-400">
+                              Active
+                            </span>
+                          )}
+                          {isNext && (
+                            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-400">
+                              Next
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <RateCell rate={row.binanceRate} /> ({row.interval}h)
@@ -172,15 +233,17 @@ export function Screener() {
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
-                          onClick={() => setTradeRow(row)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-electric px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+                          onClick={() => manualEntryEnabled && setTradeRow(row)}
+                          disabled={!manualEntryEnabled}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-electric px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <TrendingUp className="h-3.5 w-3.5" />
                           Trade
                         </button>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>

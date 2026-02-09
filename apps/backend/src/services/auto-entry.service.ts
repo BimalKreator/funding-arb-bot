@@ -1,17 +1,15 @@
+import type { ConfigService } from './config.service.js';
 import type { ExchangeManager } from './exchange/index.js';
 import type { PositionService } from './position.service.js';
 import type { ScreenerService } from './screener.service.js';
 import type { TradeService } from './trade.service.js';
 
-/** Hardcoded config (default OFF for safety). */
-const ENABLED = false;
 const MAX_ACTIVE_TRADES = 3;
-const CAPITAL_PERCENT = 0.25;
-const LEVERAGE = 1;
 const INTERVAL_MS = 4000;
 
 export class AutoEntryService {
   constructor(
+    private readonly configService: ConfigService,
     private readonly exchangeManager: ExchangeManager,
     private readonly positionService: PositionService,
     private readonly screenerService: ScreenerService,
@@ -23,7 +21,8 @@ export class AutoEntryService {
   }
 
   private async runCycle(): Promise<void> {
-    if (!ENABLED) return;
+    const cfg = await this.configService.getConfig();
+    if (!cfg.autoEntryEnabled) return;
 
     // Step 1: Checks
     const positions = await this.positionService.getPositions();
@@ -63,8 +62,8 @@ export class AutoEntryService {
       if (ex.exchangeId === 'bybit') bybitFree = available;
     }
     const lowerBalance = Math.min(binanceFree, bybitFree);
-    const allocatedCapital = lowerBalance * CAPITAL_PERCENT;
-    let quantity = (allocatedCapital * LEVERAGE) / markPrice;
+    const allocatedCapital = lowerBalance * cfg.capitalPercent;
+    let quantity = (allocatedCapital * cfg.autoLeverage) / markPrice;
     quantity = Math.floor(quantity * 10) / 10;
     if (quantity <= 0) return;
 

@@ -2,6 +2,7 @@ import { Layout } from './components/Layout';
 import { DashboardStats } from './components/DashboardStats';
 import { ActivePositions } from './components/ActivePositions';
 import { Screener } from './components/Screener';
+import { SettingsPanel } from './components/SettingsPanel';
 import { TransactionManager } from './components/TransactionManager';
 
 function App() {
@@ -10,6 +11,7 @@ function App() {
       <DashboardStats />
       <ActivePositions />
       <Screener />
+      <SettingsPanel />
       <TransactionManager />
     </Layout>
   );
