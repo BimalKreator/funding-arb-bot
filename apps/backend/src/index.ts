@@ -84,7 +84,8 @@ const autoEntryService = new AutoEntryService(
   exchangeManager,
   positionService,
   screenerService,
-  tradeService
+  tradeService,
+  notificationService
 );
 autoEntryService.startMonitoring();
 

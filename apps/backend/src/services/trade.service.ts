@@ -62,10 +62,14 @@ export class TradeService {
     }
 
     if (aOk && !bOk) {
+      const err = resultB.status === 'rejected' ? resultB.reason : null;
+      console.error('Trade Failed Details:', err instanceof Error ? err.message : err);
       await this.panicClose('binance', symbol, strategy.binanceSide, quantity);
       throw new Error(ROLLBACK_ERROR);
     }
     if (!aOk && bOk) {
+      const err = resultA.status === 'rejected' ? resultA.reason : null;
+      console.error('Trade Failed Details:', err instanceof Error ? err.message : err);
       await this.panicClose('bybit', symbol, strategy.bybitSide, quantity);
       throw new Error(ROLLBACK_ERROR);
     }
