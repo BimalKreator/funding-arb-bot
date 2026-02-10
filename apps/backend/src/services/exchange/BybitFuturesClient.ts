@@ -125,6 +125,29 @@ export class BybitFuturesClient implements ExchangeService {
     return { orderId, status: 'FILLED', exchangeId: 'bybit' };
   }
 
+  /** Total funding received for a symbol between startTime and endTime (ms). Unified Transaction Log. */
+  async getFundingIncome(symbol: string, startTime: number, endTime: number): Promise<number> {
+    if (!this.client) return 0;
+    try {
+      const res = await this.client.getTransactionLog({
+        accountType: 'UNIFIED',
+        category: 'linear',
+        startTime,
+        endTime,
+        limit: 100,
+      });
+      const list = (res.result as { list?: Array<{ symbol: string; funding?: string }> })?.list ?? [];
+      return list
+        .filter((row) => row.symbol === symbol)
+        .reduce((sum, row) => {
+          const funding = parseFloat(row.funding ?? '0');
+          return sum + (Number.isFinite(funding) ? funding : 0);
+        }, 0);
+    } catch {
+      return 0;
+    }
+  }
+
   /** Fetch active positions (non-zero). USDT Perpetual (linear) with settleCoin for Unified/Standard. */
   async getPositions(symbol?: string): Promise<ExchangePosition[]> {
     if (!this.client) throw new Error('Bybit client not configured');

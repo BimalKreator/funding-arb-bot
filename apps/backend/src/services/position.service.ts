@@ -1,5 +1,6 @@
 import type { ExchangeManager } from './exchange/index.js';
 import type { FundingService } from './funding.service.js';
+import { addClosedTrade } from './closed-trades.service.js';
 
 /** Normalize symbol for grouping (e.g. BTC/USDT:USDT -> BTCUSDT, BTCUSDT -> BTCUSDT). */
 function normalizeSymbolForGrouping(symbol: string): string {
@@ -184,7 +185,7 @@ export class PositionService {
     return result.sort((a, b) => a.symbol.localeCompare(b.symbol));
   }
 
-  async closePosition(symbol: string): Promise<{ closed: string[]; errors: string[] }> {
+  async closePosition(symbol: string, reason: string = 'Manual'): Promise<{ closed: string[]; errors: string[] }> {
     let binanceList: Awaited<ReturnType<ExchangeManager['getPositions']>> = [];
     let bybitList: Awaited<ReturnType<ExchangeManager['getPositions']>> = [];
 
@@ -197,6 +198,22 @@ export class PositionService {
 
     const bin = binanceList[0];
     const byb = bybitList[0];
+
+    const closeTime = Date.now();
+    const openTime =
+      bin?.timestamp != null && byb?.timestamp != null
+        ? Math.min(bin.timestamp, byb.timestamp)
+        : closeTime - 7 * 24 * 60 * 60 * 1000;
+
+    const size = bin?.quantity ?? byb?.quantity ?? 0;
+    const entryPrice =
+      bin != null && byb != null
+        ? (bin.entryPrice + byb.entryPrice) / 2
+        : (bin?.entryPrice ?? byb?.entryPrice ?? 0);
+    const markPrice = bin?.markPrice ?? byb?.markPrice ?? entryPrice;
+    const margin = (bin?.collateral ?? 0) + (byb?.collateral ?? 0);
+    const pnl = (bin?.unrealizedPnl ?? 0) + (byb?.unrealizedPnl ?? 0);
+    const roiPercent = margin > 0 ? (pnl / margin) * 100 : 0;
 
     const closeBin = bin
       ? this.exchangeManager.placeOrder('binance', symbol, bin.side === 'LONG' ? 'SELL' : 'BUY', bin.quantity)
@@ -213,6 +230,27 @@ export class PositionService {
     else if (bin && resBin.status === 'rejected') errors.push(`Binance: ${resBin.reason instanceof Error ? resBin.reason.message : String(resBin.reason)}`);
     if (byb && resByb.status === 'fulfilled' && resByb.value != null) closed.push('bybit');
     else if (byb && resByb.status === 'rejected') errors.push(`Bybit: ${resByb.reason instanceof Error ? resByb.reason.message : String(resByb.reason)}`);
+
+    if (closed.length > 0 && size > 0) {
+      let totalFundingReceived = 0;
+      try {
+        totalFundingReceived = await this.exchangeManager.getFundingBetween(symbol, openTime, closeTime);
+      } catch (_) {}
+      await addClosedTrade({
+        closedAt: new Date(closeTime).toISOString(),
+        symbol,
+        size,
+        entryPrice,
+        markPrice,
+        exitPrice: markPrice,
+        pnl,
+        roiPercent,
+        margin,
+        reason,
+        exchangeFee: 0,
+        totalFundingReceived,
+      });
+    }
 
     return { closed, errors };
   }

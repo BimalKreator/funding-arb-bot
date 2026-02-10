@@ -85,6 +85,27 @@ export class BinanceFuturesClient implements ExchangeService {
     return { orderId, status: 'FILLED', exchangeId: 'binance' };
   }
 
+  /** Total funding fee income for a symbol between startTime and endTime (ms). */
+  async getFundingIncome(symbol: string, startTime: number, endTime: number): Promise<number> {
+    if (!this.client) return 0;
+    try {
+      const list = await this.client.getIncomeHistory({
+        symbol,
+        incomeType: 'FUNDING_FEE',
+        startTime,
+        endTime,
+        limit: 100,
+      });
+      const arr = Array.isArray(list) ? list : [];
+      return arr.reduce((sum, row) => {
+        const income = parseFloat((row as { income?: string; asset?: string }).income ?? '0');
+        return sum + (Number.isFinite(income) ? income : 0);
+      }, 0);
+    } catch {
+      return 0;
+    }
+  }
+
   /** Fetch active positions (non-zero). */
   async getPositions(symbol?: string): Promise<ExchangePosition[]> {
     if (!this.client) throw new Error('Binance client not configured');

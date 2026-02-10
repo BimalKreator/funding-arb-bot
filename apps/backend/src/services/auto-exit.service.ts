@@ -81,7 +81,7 @@ export class AutoExitService {
               `${group.symbol}: ${reason}`,
               { symbol: group.symbol, exchange: 'binance', reason }
             );
-            await this.positionService.closePosition(group.symbol);
+            await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Binance)');
           }
         } else if (hasBybit && !hasBinance) {
           const bybitLeg = legs.find((l) => l.exchange === 'bybit');
@@ -94,7 +94,7 @@ export class AutoExitService {
               `${group.symbol}: ${reason}`,
               { symbol: group.symbol, exchange: 'bybit', reason }
             );
-            await this.positionService.closePosition(group.symbol);
+            await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Bybit)');
           }
         }
       }
@@ -149,7 +149,7 @@ export class AutoExitService {
             `Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% dropped below threshold ${threshold}% for ${group.symbol}.`,
             { symbol: group.symbol, currentNetSpread, threshold, reason: 'screenerMinSpread' }
           );
-          await this.positionService.closePosition(group.symbol);
+          await this.positionService.closePosition(group.symbol, 'Auto-Exit: Negative Spread');
         }
       }
     } catch (err) {
@@ -203,7 +203,7 @@ export class AutoExitService {
             `Exited ${group.symbol} due to negative predicted spread before funding.`,
             { symbol: group.symbol, netSpread, reason: 'Sync Exit triggered' }
           );
-          await this.positionService.closePosition(group.symbol);
+          await this.positionService.closePosition(group.symbol, 'Auto-Exit: Funding Flip');
         }
       }
     } catch (err) {

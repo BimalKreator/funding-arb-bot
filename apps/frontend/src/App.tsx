@@ -5,6 +5,7 @@ import { ActivePositions } from './components/ActivePositions';
 import { Screener } from './components/Screener';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TransactionManager } from './components/TransactionManager';
+import { ClosedTrades } from './components/ClosedTrades';
 
 const TOKEN_KEY = 'token';
 
@@ -20,6 +21,7 @@ function App() {
       <Screener />
       <SettingsPanel />
       <TransactionManager />
+      <ClosedTrades />
     </Layout>
   );
 }

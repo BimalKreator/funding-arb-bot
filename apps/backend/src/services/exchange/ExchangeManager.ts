@@ -132,6 +132,21 @@ export class ExchangeManager {
     return trading.placeOrder(symbol, side, quantity);
   }
 
+  /** Total funding received for a symbol across both exchanges between openTime and closeTime (ms). */
+  async getFundingBetween(symbol: string, openTime: number, closeTime: number): Promise<number> {
+    const binance = this.clients.get('binance') as ExchangeService & {
+      getFundingIncome?(symbol: string, startTime: number, endTime: number): Promise<number>;
+    };
+    const bybit = this.clients.get('bybit') as ExchangeService & {
+      getFundingIncome?(symbol: string, startTime: number, endTime: number): Promise<number>;
+    };
+    const [binanceFunding, bybitFunding] = await Promise.all([
+      binance?.getFundingIncome?.(symbol, openTime, closeTime) ?? Promise.resolve(0),
+      bybit?.getFundingIncome?.(symbol, openTime, closeTime) ?? Promise.resolve(0),
+    ]);
+    return (binanceFunding ?? 0) + (bybitFunding ?? 0);
+  }
+
   /** Get active positions for an exchange (optional symbol filter). */
   async getPositions(exchangeId: ExchangeId, symbol?: string): Promise<ExchangePosition[]> {
     const client = this.clients.get(exchangeId);
