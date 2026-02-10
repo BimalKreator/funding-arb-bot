@@ -25,10 +25,45 @@ export interface PositionGroup {
   legs: PositionLeg[];
   isHedged: boolean;
   isFundingFlipped: boolean;
+  /** Next funding time (UTC) as timestamp in ms for countdown. */
+  nextFundingTime?: number;
 }
 
 function symbolShort(symbol: string): string {
   return symbol.replace(/USDT$/i, '') || symbol;
+}
+
+const TEN_MIN_MS = 10 * 60 * 1000;
+
+function formatCountdown(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
+function FundingCountdown({ nextFundingTime }: { nextFundingTime?: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (nextFundingTime == null) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [nextFundingTime]);
+  if (nextFundingTime == null) return null;
+  const timeLeft = nextFundingTime - now;
+  if (timeLeft <= 0) return <span className="rounded bg-zinc-600/50 px-1.5 py-0.5 text-xs text-zinc-400">—</span>;
+  const isWarning = timeLeft < TEN_MIN_MS;
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-xs font-mono font-medium ${
+        isWarning ? 'bg-red-500/20 text-red-500' : 'bg-white/10 text-zinc-300'
+      }`}
+      title="Time until next funding"
+    >
+      {formatCountdown(timeLeft)}
+    </span>
+  );
 }
 
 function ColoredNumber({ value, decimals = 2 }: { value: number; decimals?: number }) {
@@ -189,6 +224,7 @@ export function ActivePositions() {
                               >
                                 {group.isHedged ? 'Hedged' : 'Unhedged'}
                               </span>
+                              <FundingCountdown nextFundingTime={group.nextFundingTime} />
                               {group.isFundingFlipped && (
                                 <span className="animate-pulse rounded bg-red-500/30 px-1.5 py-0.5 text-xs font-medium text-red-400">
                                   Funding Flipped

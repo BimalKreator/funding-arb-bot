@@ -216,7 +216,11 @@ export function Screener() {
                       </td>
                       <td className="px-4 py-3">{formatPct(row.grossSpread)}</td>
                       <td className="px-4 py-3">
-                        <span className="font-semibold text-green-400">
+                        <span
+                          className={`font-semibold ${
+                            row.netSpread < 0 ? 'text-red-500' : 'text-green-500'
+                          }`}
+                        >
                           {formatPct(row.netSpread)}
                         </span>
                       </td>

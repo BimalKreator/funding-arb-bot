@@ -42,6 +42,8 @@ export interface PositionGroup {
   isHedged: boolean;
   /** True if net spread <= 0 and within 10 min of next funding. */
   isFundingFlipped: boolean;
+  /** Next funding time (UTC slot) as timestamp in ms for countdown. */
+  nextFundingTime?: number;
 }
 
 const HEDGE_DUST = 1;
@@ -133,6 +135,7 @@ export class PositionService {
 
     const result: PositionGroup[] = [];
     const msUntilFunding = getMsUntilNextFundingUTC();
+    const nextFundingTime = Date.now() + msUntilFunding;
     const withinFundingWindow = msUntilFunding <= WINDOW_BEFORE_FUNDING_MS && msUntilFunding >= 0;
 
     for (const [symbol, legs] of legsBySymbol) {
@@ -174,6 +177,7 @@ export class PositionService {
         legs,
         isHedged,
         isFundingFlipped,
+        nextFundingTime,
       });
     }
 

@@ -104,13 +104,14 @@ export class AutoExitService {
   }
 
   /**
-   * Negative spread protection: if live net spread for an active position goes below zero, exit to prevent loss.
-   * Only runs when autoExitEnabled is true.
+   * Spread threshold exit: if live net spread (in %) drops below screenerMinSpread, exit.
+   * Uses ConfigService for dynamic screenerMinSpread. Only runs when autoExitEnabled is true.
    */
   private async checkNegativeSpreads(): Promise<void> {
     const cfg = await this.configService.getConfig();
     if (!cfg.autoExitEnabled) return;
     if (!this.fundingService) return;
+    const threshold = Number.isFinite(cfg.screenerMinSpread) ? cfg.screenerMinSpread : 0;
     try {
       const groups = await this.positionService.getPositions();
       const rates = this.fundingService.getLatestFundingRates();
@@ -131,20 +132,22 @@ export class AutoExitService {
         const bybitRate = parseFloat(bybitRateStr);
         if (!Number.isFinite(binanceRate) || !Number.isFinite(bybitRate)) continue;
 
-        // Long Bin / Short Byb: net spread = Bybit Funding - Binance Funding (we receive Bybit, pay Binance)
-        const netSpread =
-          binanceLeg.side === 'LONG' ? bybitRate - binanceRate : binanceRate - bybitRate;
+        // Short Bin / Long Byb: (BinanceRate - BybitRate) * 100
+        // Long Bin / Short Byb: (BybitRate - BinanceRate) * 100
+        const currentNetSpread =
+          binanceLeg.side === 'LONG'
+            ? (bybitRate - binanceRate) * 100
+            : (binanceRate - bybitRate) * 100;
 
-        if (netSpread < 0) {
-          const valuePct = (netSpread * 100).toFixed(4);
+        if (currentNetSpread < threshold) {
           console.log(
-            `[AutoExit] Auto-Exit: Negative Spread detected for ${group.symbol}. Spread: ${valuePct}%. Closing to prevent loss.`
+            `[AutoExit] Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% dropped below threshold ${threshold}%.`
           );
           this.notificationService?.add(
             'WARNING',
-            'Negative Spread Exit',
-            `WARNING: Negative Spread Exit for ${group.symbol}. Spread: ${valuePct}%.`,
-            { symbol: group.symbol, netSpread, reason: 'Negative spread' }
+            'Spread Threshold Exit',
+            `Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% dropped below threshold ${threshold}% for ${group.symbol}.`,
+            { symbol: group.symbol, currentNetSpread, threshold, reason: 'screenerMinSpread' }
           );
           await this.positionService.closePosition(group.symbol);
         }

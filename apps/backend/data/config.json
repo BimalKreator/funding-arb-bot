@@ -3,5 +3,6 @@
   "autoExitEnabled": true,
   "manualEntryEnabled": true,
   "capitalPercent": 0.3,
-  "autoLeverage": 1
+  "autoLeverage": 3,
+  "screenerMinSpread": 0.05
 }
