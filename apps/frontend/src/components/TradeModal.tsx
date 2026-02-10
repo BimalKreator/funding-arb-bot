@@ -45,11 +45,13 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
   const estValue = markPrice != null && quantity > 0 ? quantity * markPrice : 0;
   const marginRequired = leverage > 0 ? estValue / leverage : 0;
 
+  const MIN_NOTIONAL = 5.1;
+  const belowMinNotional = estValue > 0 && estValue < MIN_NOTIONAL;
   const insufficientBinance = marginRequired > balances.binance && marginRequired > 0;
   const insufficientBybit = marginRequired > balances.bybit && marginRequired > 0;
   const hasInsufficientMargin = insufficientBinance || insufficientBybit;
   const hasPrices = binancePrice != null && bybitPrice != null;
-  const canConfirm = !hasInsufficientMargin && quantity > 0 && leverage >= 1 && !executing && hasPrices;
+  const canConfirm = !hasInsufficientMargin && !belowMinNotional && quantity > 0 && leverage >= 1 && !executing && hasPrices;
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +87,7 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
           quantity,
           strategy: { binanceSide, bybitSide },
           leverage,
+          markPrice: markPrice ?? undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -190,6 +193,11 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
             <p className="mt-1 text-xs text-zinc-500">
               Approx. Value: ${estValue.toFixed(2)}
             </p>
+            {belowMinNotional && (
+              <p className="mt-1 text-sm text-amber-400">
+                Value must be &gt; $5.1
+              </p>
+            )}
           </div>
 
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">

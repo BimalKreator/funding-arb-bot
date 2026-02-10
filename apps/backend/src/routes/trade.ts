@@ -7,7 +7,7 @@ export function createTradeRouter(tradeService: TradeService): Router {
 
   router.post('/', async (req: Request, res: Response) => {
     try {
-      const { symbol, quantity: quantityRaw, strategy: strategyRaw, leverage: leverageRaw } = req.body ?? {};
+      const { symbol, quantity: quantityRaw, strategy: strategyRaw, leverage: leverageRaw, markPrice: markPriceRaw } = req.body ?? {};
       if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') {
         res.status(400).json({ error: 'Missing or invalid symbol' });
         return;
@@ -33,7 +33,8 @@ export function createTradeRouter(tradeService: TradeService): Router {
         return;
       }
       const strategyObj: ArbitrageStrategy = { binanceSide, bybitSide };
-      const result = await tradeService.executeArbitrage(symbol.trim(), quantity, strategyObj, leverage);
+      const markPrice = markPriceRaw != null && Number.isFinite(Number(markPriceRaw)) ? Number(markPriceRaw) : undefined;
+      const result = await tradeService.executeArbitrage(symbol.trim(), quantity, strategyObj, leverage, markPrice);
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Trade failed';

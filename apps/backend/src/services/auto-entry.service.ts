@@ -116,7 +116,7 @@ export class AutoEntryService {
     };
     try {
       const leverage = Math.max(1, Math.floor(cfg.autoLeverage)) || 1;
-      await this.tradeService.executeArbitrage(symbol, quantity, strategy, leverage);
+      await this.tradeService.executeArbitrage(symbol, quantity, strategy, leverage, markPrice);
       console.log(`Auto-Entry Triggered for ${symbol} with ${quantity} @ ${leverage}x`);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

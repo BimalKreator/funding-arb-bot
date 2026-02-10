@@ -14,6 +14,7 @@ export interface ExecuteArbitrageResult {
 }
 
 const ROLLBACK_ERROR = 'Trade Failed - Rolled Back';
+const MIN_NOTIONAL_USD = 5.1;
 const REBALANCE_QTY_THRESHOLD = 1;
 const REBALANCE_MIN_AGE_MS = 60_000; // 60 seconds
 
@@ -27,13 +28,24 @@ export class TradeService {
     symbol: string,
     quantity: number,
     strategy: ArbitrageStrategy,
-    leverage: number
+    leverage: number,
+    markPrice?: number
   ): Promise<ExecuteArbitrageResult> {
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error('Invalid quantity');
     }
     if (!Number.isInteger(leverage) || leverage < 1) {
       throw new Error('Invalid leverage');
+    }
+
+    const estimatedNotional = Number.isFinite(markPrice) && markPrice > 0 ? quantity * markPrice : 0;
+    if (estimatedNotional > 0 && estimatedNotional < MIN_NOTIONAL_USD) {
+      console.log(
+        `Skipping trade for ${symbol}: Notional value $${estimatedNotional.toFixed(2)} is below $${MIN_NOTIONAL_USD} limit.`
+      );
+      throw new Error(
+        `Notional value $${estimatedNotional.toFixed(2)} is below $${MIN_NOTIONAL_USD} minimum.`
+      );
     }
 
     console.log(`Setting leverage to ${leverage}x for ${symbol}...`);
@@ -144,18 +156,35 @@ export class TradeService {
         const reduceQty = Math.round(diff * 100000) / 100000;
         if (reduceQty <= 0) continue;
 
-        if (binanceQty > bybitQty) {
-          const side = binancePos.side === 'LONG' ? 'SELL' : 'BUY';
+        const markPrice = binancePos.markPrice && binancePos.markPrice > 0
+          ? binancePos.markPrice
+          : bybitPos.markPrice && bybitPos.markPrice > 0
+            ? bybitPos.markPrice
+            : 0;
+        const rebalanceNotional = markPrice > 0 ? reduceQty * markPrice : 0;
+
+        if (rebalanceNotional > 0 && rebalanceNotional < MIN_NOTIONAL_USD) {
           console.log(
-            `Auto-Balancing ${symbol}: Reducing Binance quantity by ${reduceQty} to match Bybit.`
+            `Skipping rebalance for ${symbol}: Rebalance notional $${rebalanceNotional.toFixed(2)} is below $${MIN_NOTIONAL_USD} limit.`
+          );
+          continue;
+        }
+
+        // Prefer increasing the smaller side (Binance fails on small decreases).
+        if (binanceQty < bybitQty) {
+          const side = binancePos.side === 'LONG' ? 'BUY' : 'SELL';
+          console.log(
+            `Auto-Balancing ${symbol}: Increasing Binance by ${reduceQty} (notional $${rebalanceNotional.toFixed(2)}) to match Bybit.`
           );
           await this.exchangeManager.placeOrder('binance', symbol, side, reduceQty);
-        } else {
-          const side = bybitPos.side === 'LONG' ? 'SELL' : 'BUY';
+        } else if (bybitQty < binanceQty) {
+          const side = bybitPos.side === 'LONG' ? 'BUY' : 'SELL';
           console.log(
-            `Auto-Balancing ${symbol}: Reducing Bybit quantity by ${reduceQty} to match Binance.`
+            `Auto-Balancing ${symbol}: Increasing Bybit by ${reduceQty} (notional $${rebalanceNotional.toFixed(2)}) to match Binance.`
           );
           await this.exchangeManager.placeOrder('bybit', symbol, side, reduceQty);
+        } else {
+          // Equal (shouldn't hit due to diff check)
         }
       }
     } catch (err) {
