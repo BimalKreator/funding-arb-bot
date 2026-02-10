@@ -1,0 +1,32 @@
+[
+  {
+    "closedAt": "2026-02-10T03:11:25.592Z",
+    "symbol": "ZKPUSDT",
+    "size": 1088,
+    "entryPrice": 0.105245285,
+    "markPrice": 0.10482,
+    "exitPrice": 0.10482,
+    "pnl": 0.33666000000000007,
+    "roiPercent": 0.43680927226742916,
+    "margin": 77.07253975,
+    "reason": "Auto-Exit: Negative Spread",
+    "exchangeFee": 0,
+    "totalFundingReceived": 0,
+    "id": "ct-1770693085759-82p7rmc"
+  },
+  {
+    "closedAt": "2026-02-10T03:08:01.107Z",
+    "symbol": "ICXUSDT",
+    "size": 1484,
+    "entryPrice": 0.0409843645418,
+    "markPrice": 0.03921027,
+    "exitPrice": 0.03921027,
+    "pnl": 0.08597416000000013,
+    "roiPercent": 0.22130047342841078,
+    "margin": 38.84951472,
+    "reason": "Manual",
+    "exchangeFee": 0,
+    "totalFundingReceived": 0.10194308999999999,
+    "id": "ct-1770692881288-m7dc5pq"
+  }
+]
