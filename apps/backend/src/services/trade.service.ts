@@ -14,6 +14,8 @@ export interface ExecuteArbitrageResult {
 }
 
 const ROLLBACK_ERROR = 'Trade Failed - Rolled Back';
+const REBALANCE_QTY_THRESHOLD = 1;
+const REBALANCE_MIN_AGE_MS = 60_000; // 60 seconds
 
 export class TradeService {
   constructor(
@@ -105,6 +107,62 @@ export class TradeService {
       await this.exchangeManager.placeOrder(exchangeId, symbol, counterSide, quantity);
     } catch (err) {
       console.error(`Panic close failed on ${exchangeId}:`, err);
+    }
+  }
+
+  /**
+   * Auto-balancer: if Binance and Bybit quantities differ beyond threshold and position age > 60s,
+   * reduce the larger side by the difference to match the smaller.
+   */
+  async rebalanceQuantities(): Promise<void> {
+    try {
+      const [binanceList, bybitList] = await Promise.all([
+        this.exchangeManager.getPositions('binance'),
+        this.exchangeManager.getPositions('bybit'),
+      ]);
+      const now = Date.now();
+      const symbolsBinance = new Set(binanceList.map((p) => p.symbol));
+      const symbolsBybit = new Set(bybitList.map((p) => p.symbol));
+
+      for (const symbol of symbolsBinance) {
+        if (!symbolsBybit.has(symbol)) continue;
+        const binancePos = binanceList.find((p) => p.symbol === symbol);
+        const bybitPos = bybitList.find((p) => p.symbol === symbol);
+        if (!binancePos || !bybitPos) continue;
+
+        const binanceQty = binancePos.quantity;
+        const bybitQty = bybitPos.quantity;
+        const diff = Math.abs(binanceQty - bybitQty);
+        if (diff <= REBALANCE_QTY_THRESHOLD) continue;
+
+        const oldestTimestamp = Math.min(
+          binancePos.timestamp ?? 0,
+          bybitPos.timestamp ?? 0
+        );
+        if (oldestTimestamp <= 0 || now - oldestTimestamp < REBALANCE_MIN_AGE_MS) continue;
+
+        const reduceQty = Math.round(diff * 100000) / 100000;
+        if (reduceQty <= 0) continue;
+
+        if (binanceQty > bybitQty) {
+          const side = binancePos.side === 'LONG' ? 'SELL' : 'BUY';
+          console.log(
+            `Auto-Balancing ${symbol}: Reducing Binance quantity by ${reduceQty} to match Bybit.`
+          );
+          await this.exchangeManager.placeOrder('binance', symbol, side, reduceQty);
+        } else {
+          const side = bybitPos.side === 'LONG' ? 'SELL' : 'BUY';
+          console.log(
+            `Auto-Balancing ${symbol}: Reducing Bybit quantity by ${reduceQty} to match Binance.`
+          );
+          await this.exchangeManager.placeOrder('bybit', symbol, side, reduceQty);
+        }
+      }
+    } catch (err) {
+      console.error(
+        '[TradeService] rebalanceQuantities error:',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 }

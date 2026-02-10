@@ -8,7 +8,7 @@ const BALANCE_HISTORY_FILE = join(DATA_DIR, 'balance_history.json');
 
 /** Hardcoded opening balance for this date. */
 const HARDCODED_OPENING_DATE = '2026-02-10';
-const HARDCODED_OPENING_BALANCE = 265;
+const HARDCODED_OPENING_BALANCE = 260;
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 

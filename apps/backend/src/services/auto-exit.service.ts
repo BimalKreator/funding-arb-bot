@@ -3,7 +3,7 @@ import type { PositionService } from './position.service.js';
 import type { NotificationService } from './notification.service.js';
 import type { FundingService } from './funding.service.js';
 
-const RUN_INTERVAL_MS = 10_000;
+const RUN_INTERVAL_MS = 30_000; // 30 seconds for spread threshold check
 const GRACE_PERIOD_MS = 60_000;
 const FUNDING_FLIP_INTERVAL_MS = 60_000; // 1 minute
 const WINDOW_BEFORE_FUNDING_MS = 10 * 60 * 1000; // 10 minutes before next funding
@@ -38,7 +38,7 @@ export class AutoExitService {
     if (this.intervalId != null) return;
     this.intervalId = setInterval(() => this.run(), RUN_INTERVAL_MS);
     this.fundingFlipIntervalId = setInterval(() => this.checkFundingFlips(), FUNDING_FLIP_INTERVAL_MS);
-    console.log('[AutoExitService] Started (orphan 10s, funding flip 1m)');
+    console.log('[AutoExitService] Started (orphan/Spread check 30s, funding flip 1m)');
   }
 
   stop(): void {

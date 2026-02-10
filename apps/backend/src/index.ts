@@ -106,6 +106,9 @@ app.use('/api/transactions', createTransactionsRouter(balanceService));
 
 setInterval(() => balanceService.runMidnightSnapshotIfNeeded(), HOUR_MS);
 
+const REBALANCE_INTERVAL_MS = 30_000;
+setInterval(() => tradeService.rebalanceQuantities(), REBALANCE_INTERVAL_MS);
+
 // WebSocket endpoint placeholder for future implementation
 // app.use('/ws', wsHandler);
 
