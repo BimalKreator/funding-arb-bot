@@ -171,7 +171,7 @@ export class FundingService {
       const arr = Array.isArray(fundingInfo) ? fundingInfo : [];
       for (const row of arr) {
         const hours = Number((row as { symbol?: string; fundingIntervalHours?: number }).fundingIntervalHours);
-        if (row.symbol && (hours === 4 || hours === 8)) map.set(row.symbol, hours);
+        if (row.symbol && [1, 2, 4, 8].includes(hours)) map.set(row.symbol, hours);
         else if (row.symbol) map.set(row.symbol, DEFAULT_BINANCE_INTERVAL_HOURS);
       }
       const markPrices = await this.binanceRest.getMarkPrice();
@@ -195,12 +195,14 @@ export class FundingService {
     return map;
   }
 
-  /** Deduce 4h vs 8h from time-to-next funding when fundingInfo has no interval for this symbol */
+  /** Deduce interval from time-to-next funding when fundingInfo has no interval for this symbol */
   private deduceBinanceIntervalFromNextFundingTime(symbol: string): number {
     const next = this.binanceNextFundingTimeBySymbol.get(symbol);
     if (!next) return DEFAULT_BINANCE_INTERVAL_HOURS;
     const now = Date.now();
     const gapHours = (next - now) / (60 * 60 * 1000);
+    if (gapHours >= 0.5 && gapHours <= 1.5) return 1;
+    if (gapHours >= 1.5 && gapHours <= 2.5) return 2;
     if (gapHours >= 3 && gapHours <= 5) return 4;
     return DEFAULT_BINANCE_INTERVAL_HOURS;
   }

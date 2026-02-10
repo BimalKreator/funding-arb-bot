@@ -50,19 +50,19 @@ export interface PositionGroup {
 const HEDGE_DUST = 1;
 const WINDOW_BEFORE_FUNDING_MS = 10 * 60 * 1000;
 
-/** Ms from now until next funding (UTC 00:00, 08:00, 16:00). */
-function getMsUntilNextFundingUTC(): number {
+/** Ms from now until next funding for a given interval (1h, 2h, 4h, or 8h). Uses UTC slot alignment. */
+function getMsUntilNextFundingForInterval(intervalHours: number): number {
   const now = new Date();
   const utcMin =
     now.getUTCHours() * 60 +
     now.getUTCMinutes() +
     now.getUTCSeconds() / 60 +
     now.getUTCMilliseconds() / 60000;
-  const slots = [0, 8 * 60, 16 * 60];
-  for (const slot of slots) {
-    if (slot > utcMin) return (slot - utcMin) * 60 * 1000;
-  }
-  return (24 * 60 - utcMin) * 60 * 1000;
+  const intervalMin = Math.max(1, Math.min(24, intervalHours)) * 60;
+  let nextSlot = (Math.floor(utcMin / intervalMin) + 1) * intervalMin;
+  if (nextSlot >= 24 * 60) nextSlot = 0;
+  const minutesUntil = nextSlot === 0 ? 24 * 60 - utcMin : nextSlot - utcMin;
+  return minutesUntil * 60 * 1000;
 }
 
 export class PositionService {
@@ -134,13 +134,23 @@ export class PositionService {
       addLeg('bybit', p);
     }
 
+    const snapshot = this.fundingService.getIntervalsSnapshot();
+    const intervalsBySymbol = new Map(
+      snapshot.intervals.map((i) => [
+        i.symbol,
+        i.binanceIntervalHours ?? i.bybitIntervalHours ?? 8,
+      ])
+    );
+
     const result: PositionGroup[] = [];
-    const msUntilFunding = getMsUntilNextFundingUTC();
-    const nextFundingTime = Date.now() + msUntilFunding;
-    const withinFundingWindow = msUntilFunding <= WINDOW_BEFORE_FUNDING_MS && msUntilFunding >= 0;
 
     for (const [symbol, legs] of legsBySymbol) {
       if (legs.length === 0) continue;
+      const intervalHours = intervalsBySymbol.get(symbol) ?? 8;
+      const msUntilFunding = getMsUntilNextFundingForInterval(intervalHours);
+      const nextFundingTime = Date.now() + msUntilFunding;
+      const withinFundingWindow = msUntilFunding <= WINDOW_BEFORE_FUNDING_MS && msUntilFunding >= 0;
+
       const totalPnl = legs.reduce((s, l) => s + l.unrealizedPnl, 0);
       const netFundingFee = legs.reduce((s, l) => s + l.estFundingFee, 0);
       const binanceLeg = legs.find((l) => l.exchange === 'binance');
