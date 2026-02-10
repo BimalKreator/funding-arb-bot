@@ -14,6 +14,7 @@ export interface BotConfig {
   manualEntryEnabled: boolean;
   capitalPercent: number;
   autoLeverage: number;
+  screenerMinSpread: number;
 }
 
 /** Rates and spreads from API are already in percentage (e.g. 0.01 = 0.01%) */
@@ -50,7 +51,6 @@ function symbolShort(symbol: string): string {
 }
 
 export function Screener() {
-  const [threshold, setThreshold] = useState(0);
   const [data, setData] = useState<ScreenerResultEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +58,8 @@ export function Screener() {
   const [tradeRow, setTradeRow] = useState<ScreenerResultEntry | null>(null);
   const [activePositionSymbols, setActivePositionSymbols] = useState<Set<string>>(new Set());
   const [config, setConfig] = useState<BotConfig | null>(null);
+
+  const screenerMinSpread = config?.screenerMinSpread ?? 0;
 
   const fetchPositions = useCallback(async () => {
     try {
@@ -83,7 +85,7 @@ export function Screener() {
 
   const fetchScreener = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_BASE}/screener?threshold=${threshold}`);
+      const res = await apiFetch(`${API_BASE}/screener?threshold=${screenerMinSpread}`);
       if (!res.ok) throw new Error(res.statusText);
       const json: ScreenerResultEntry[] = await res.json();
       setData(json);
@@ -93,7 +95,7 @@ export function Screener() {
     } finally {
       setLoading(false);
     }
-  }, [threshold]);
+  }, [screenerMinSpread]);
 
   useEffect(() => {
     setLoading(true);
@@ -130,21 +132,9 @@ export function Screener() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-zinc-400">
-              <span>Net spread threshold:</span>
-              <input
-                type="number"
-                step="0.001"
-                min="0"
-                value={threshold}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  setThreshold(Number.isNaN(v) ? 0 : v);
-                  setPage(0);
-                }}
-                className="w-20 rounded border border-white/10 bg-white/5 px-2 py-1.5 text-white backdrop-blur-sm focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
-              />
-            </label>
+            <span className="text-sm text-zinc-400">
+              Min spread: {screenerMinSpread}% (set in Settings)
+            </span>
             <button
               type="button"
               onClick={() => {

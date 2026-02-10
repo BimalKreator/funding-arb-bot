@@ -9,6 +9,7 @@ export interface BotConfig {
   manualEntryEnabled: boolean;
   capitalPercent: number;
   autoLeverage: number;
+  screenerMinSpread: number;
 }
 
 const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
@@ -84,6 +85,16 @@ export function SettingsPanel() {
     setConfig((c) => (c ? { ...c, autoLeverage: value } : null));
     updateBackend({ autoLeverage: value });
   };
+
+  const setScreenerMinSpread = (value: number) => {
+    if (!config) return;
+    const clamped = Math.max(-100, Math.min(100, Number.isFinite(value) ? value : 0));
+    setConfig((c) => (c ? { ...c, screenerMinSpread: clamped } : null));
+  };
+
+  const applyScreenerMinSpreadToBackend = useCallback(() => {
+    if (config) updateBackend({ screenerMinSpread: config.screenerMinSpread });
+  }, [config, updateBackend]);
 
   if (loading && !config) {
     return (
@@ -221,6 +232,22 @@ export function SettingsPanel() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm text-zinc-300">Screener Min Spread %</label>
+                      <input
+                        type="number"
+                        step="0.001"
+                        min={-100}
+                        max={100}
+                        value={c.screenerMinSpread ?? 0}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (!Number.isNaN(v)) setScreenerMinSpread(v);
+                        }}
+                        onBlur={applyScreenerMinSpreadToBackend}
+                        className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
+                      />
                     </div>
                   </div>
                 </div>

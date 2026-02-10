@@ -10,6 +10,7 @@ export interface BotConfig {
   manualEntryEnabled: boolean;
   capitalPercent: number;
   autoLeverage: number;
+  screenerMinSpread: number;
 }
 
 const DEFAULTS: BotConfig = {
@@ -18,6 +19,7 @@ const DEFAULTS: BotConfig = {
   manualEntryEnabled: true,
   capitalPercent: 0.25,
   autoLeverage: 1,
+  screenerMinSpread: 0,
 };
 
 function clampCapitalPercent(v: number): number {
@@ -35,6 +37,11 @@ function clampLeverage(v: number): number {
   return best;
 }
 
+function clampScreenerMinSpread(v: number): number {
+  if (!Number.isFinite(v)) return DEFAULTS.screenerMinSpread;
+  return Math.max(-100, Math.min(100, v));
+}
+
 export class ConfigService {
   private cache: BotConfig | null = null;
 
@@ -49,6 +56,7 @@ export class ConfigService {
         manualEntryEnabled: typeof parsed.manualEntryEnabled === 'boolean' ? parsed.manualEntryEnabled : DEFAULTS.manualEntryEnabled,
         capitalPercent: clampCapitalPercent(Number(parsed.capitalPercent)),
         autoLeverage: clampLeverage(Number(parsed.autoLeverage)),
+        screenerMinSpread: clampScreenerMinSpread(Number(parsed.screenerMinSpread)),
       };
       return this.cache;
     } catch {
@@ -65,6 +73,7 @@ export class ConfigService {
       manualEntryEnabled: typeof partial.manualEntryEnabled === 'boolean' ? partial.manualEntryEnabled : current.manualEntryEnabled,
       capitalPercent: partial.capitalPercent !== undefined ? clampCapitalPercent(Number(partial.capitalPercent)) : current.capitalPercent,
       autoLeverage: partial.autoLeverage !== undefined ? clampLeverage(Number(partial.autoLeverage)) : current.autoLeverage,
+      screenerMinSpread: partial.screenerMinSpread !== undefined ? clampScreenerMinSpread(Number(partial.screenerMinSpread)) : current.screenerMinSpread,
     };
     await mkdir(DATA_DIR, { recursive: true });
     await writeFile(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf-8');

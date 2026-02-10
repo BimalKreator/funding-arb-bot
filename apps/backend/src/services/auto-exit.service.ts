@@ -57,6 +57,9 @@ export class AutoExitService {
     try {
       const cfg = await this.configService.getConfig();
       if (!cfg.autoExitEnabled) return;
+
+      await this.checkNegativeSpreads();
+
       const groups = await this.positionService.getPositions();
       const now = Date.now();
 
@@ -97,6 +100,60 @@ export class AutoExitService {
       }
     } catch (err) {
       console.error('[AutoExitService] Run error:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * Negative spread protection: if live net spread for an active position goes below zero, exit to prevent loss.
+   * Only runs when autoExitEnabled is true.
+   */
+  private async checkNegativeSpreads(): Promise<void> {
+    const cfg = await this.configService.getConfig();
+    if (!cfg.autoExitEnabled) return;
+    if (!this.fundingService) return;
+    try {
+      const groups = await this.positionService.getPositions();
+      const rates = this.fundingService.getLatestFundingRates();
+
+      for (const group of groups) {
+        const legs = group.legs;
+        if (legs.length === 0) continue;
+        const binanceLeg = legs.find((l) => l.exchange === 'binance');
+        const bybitLeg = legs.find((l) => l.exchange === 'bybit');
+        if (!binanceLeg || !bybitLeg) continue;
+
+        const entry = rates.get(group.symbol);
+        const binanceRateStr = entry?.binance?.fundingRate;
+        const bybitRateStr = entry?.bybit?.fundingRate;
+        if (binanceRateStr === undefined || bybitRateStr === undefined) continue;
+
+        const binanceRate = parseFloat(binanceRateStr);
+        const bybitRate = parseFloat(bybitRateStr);
+        if (!Number.isFinite(binanceRate) || !Number.isFinite(bybitRate)) continue;
+
+        // Long Bin / Short Byb: net spread = Bybit Funding - Binance Funding (we receive Bybit, pay Binance)
+        const netSpread =
+          binanceLeg.side === 'LONG' ? bybitRate - binanceRate : binanceRate - bybitRate;
+
+        if (netSpread < 0) {
+          const valuePct = (netSpread * 100).toFixed(4);
+          console.log(
+            `[AutoExit] Auto-Exit: Negative Spread detected for ${group.symbol}. Spread: ${valuePct}%. Closing to prevent loss.`
+          );
+          this.notificationService?.add(
+            'WARNING',
+            'Negative Spread Exit',
+            `WARNING: Negative Spread Exit for ${group.symbol}. Spread: ${valuePct}%.`,
+            { symbol: group.symbol, netSpread, reason: 'Negative spread' }
+          );
+          await this.positionService.closePosition(group.symbol);
+        }
+      }
+    } catch (err) {
+      console.error(
+        '[AutoExitService] checkNegativeSpreads error:',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 
