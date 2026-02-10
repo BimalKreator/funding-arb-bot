@@ -39,7 +39,7 @@ export function Layout({ children }: LayoutProps) {
       </main>
       <footer className="border-t border-white/10 bg-white/5 py-4 backdrop-blur-sm">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-zinc-400 sm:px-6 lg:px-8">
-          No trading logic — placeholder UI
+          Tradeict AI Pvt Ltd
         </div>
       </footer>
     </div>

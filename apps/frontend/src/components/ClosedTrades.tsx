@@ -143,11 +143,12 @@ export function ClosedTrades() {
                           <span className="max-w-[140px] truncate" title={row.reason}>
                             {row.reason}
                           </span>
-                          <Info
-                            className="h-3.5 w-3.5 shrink-0 text-zinc-500"
-                            aria-label="Details"
-                            title={row.reason}
-                          />
+                          <span title={row.reason}>
+                            <Info
+                              className="h-3.5 w-3.5 shrink-0 text-zinc-500"
+                              aria-label="Details"
+                            />
+                          </span>
                         </span>
                       </td>
                       <td className="px-4 py-3">{row.exchangeFee.toFixed(2)}</td>
