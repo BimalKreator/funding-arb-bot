@@ -65,6 +65,13 @@ export class BinanceFuturesClient implements ExchangeService {
       }));
   }
 
+  /** Set leverage for a symbol (USDT-margined futures). Must be called before placing orders. */
+  async setLeverage(leverage: number, symbol: string): Promise<void> {
+    if (!this.client) throw new Error('Binance client not configured');
+    if (!Number.isInteger(leverage) || leverage < 1) throw new Error(`Invalid leverage: ${leverage}`);
+    await this.client.setLeverage({ symbol, leverage });
+  }
+
   async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {
     if (!this.client) throw new Error('Binance client not configured');
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid quantity for ${symbol}`);

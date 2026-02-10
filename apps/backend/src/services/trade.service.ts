@@ -24,11 +24,25 @@ export class TradeService {
   async executeArbitrage(
     symbol: string,
     quantity: number,
-    strategy: ArbitrageStrategy
+    strategy: ArbitrageStrategy,
+    leverage: number
   ): Promise<ExecuteArbitrageResult> {
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error('Invalid quantity');
     }
+    if (!Number.isInteger(leverage) || leverage < 1) {
+      throw new Error('Invalid leverage');
+    }
+
+    console.log(`Setting leverage to ${leverage}x for ${symbol}...`);
+    try {
+      await this.exchangeManager.setLeverageOnBothExchanges(leverage, symbol);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`Warning: Failed to set leverage. Check max leverage limits. Error: ${message}`);
+      throw new Error(`Leverage Set Failed: ${message}`);
+    }
+    console.log(`Leverage synced to ${leverage}x on both exchanges.`);
 
     const orderA = this.exchangeManager.placeOrder(
       'binance',

@@ -84,6 +84,7 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
           symbol,
           quantity,
           strategy: { binanceSide, bybitSide },
+          leverage,
         }),
       });
       const data = await res.json().catch(() => ({}));

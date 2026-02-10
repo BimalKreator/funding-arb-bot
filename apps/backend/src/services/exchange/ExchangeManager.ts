@@ -105,6 +105,17 @@ export class ExchangeManager {
     };
   }
 
+  /** Set leverage on both Binance and Bybit for the symbol before placing orders. */
+  async setLeverageOnBothExchanges(leverage: number, symbol: string): Promise<void> {
+    const binance = this.clients.get('binance') as ExchangeService & { setLeverage?(leverage: number, symbol: string): Promise<void> };
+    const bybit = this.clients.get('bybit') as ExchangeService & { setLeverage?(leverage: number, symbol: string): Promise<void> };
+    const promises: Promise<void>[] = [];
+    if (binance?.setLeverage) promises.push(binance.setLeverage(leverage, symbol));
+    if (bybit?.setLeverage) promises.push(bybit.setLeverage(leverage, symbol));
+    if (promises.length === 0) throw new Error('No exchange configured for leverage');
+    await Promise.all(promises);
+  }
+
   /** Place a market order on the given exchange (quantity in base asset). */
   async placeOrder(
     exchangeId: ExchangeId,

@@ -48,25 +48,33 @@ export class BybitFuturesClient implements ExchangeService {
     }>;
     const balances: UnifiedBalance[] = [];
     for (const account of list) {
-      const accountUsedMargin =
-        account.totalInitialMargin ?? account.totalMarginBalance;
+      const usedMarginRaw = account.totalInitialMargin ?? account.totalMarginBalance ?? '0';
+      const usedMarginNum = parseFloat(String(usedMarginRaw).trim());
+      const usedMargin = Number.isFinite(usedMarginNum) && usedMarginNum >= 0 ? usedMarginNum : 0;
+
       for (const coin of account.coin ?? []) {
         const totalRaw = coin.walletBalance ?? '0';
-        const total = toValidBalance(totalRaw, '0');
-        const availableRaw = coin.availableToWithdraw ?? coin.free ?? '';
-        const available = toValidBalance(availableRaw, total);
-        const lockedNum = parseFloat(total) - parseFloat(available);
-        const locked = Number.isFinite(lockedNum) ? Math.max(0, lockedNum).toFixed(8) : '0.00000000';
-        let usedMargin: string | undefined;
-        if (coin.coin === 'USDT' && accountUsedMargin != null && accountUsedMargin !== '') {
-          usedMargin = toValidBalance(accountUsedMargin, locked);
+        const totalNum = parseFloat(String(totalRaw).trim());
+        const total = Number.isFinite(totalNum) && totalNum >= 0 ? totalNum.toFixed(8) : '0.00000000';
+
+        let available: string;
+        if (coin.coin === 'USDT') {
+          const freeNum = totalNum - usedMargin;
+          available = (Number.isFinite(freeNum) && freeNum >= 0 ? freeNum : 0).toFixed(8);
+        } else {
+          const availableRaw = coin.availableToWithdraw ?? coin.free ?? '';
+          available = toValidBalance(availableRaw, total);
         }
+
+        const lockedNum = totalNum - parseFloat(available);
+        const locked = Number.isFinite(lockedNum) ? Math.max(0, lockedNum).toFixed(8) : '0.00000000';
+        const usedMarginStr = usedMargin.toFixed(8);
         balances.push({
           asset: coin.coin,
           available,
           locked,
           total,
-          ...(usedMargin !== undefined ? { usedMargin } : {}),
+          ...(coin.coin === 'USDT' ? { usedMargin: usedMarginStr } : {}),
         });
       }
     }
@@ -86,6 +94,19 @@ export class BybitFuturesClient implements ExchangeService {
       quoteAsset: s.quoteCoin,
       status: s.status,
     }));
+  }
+
+  /** Set leverage for a symbol (linear/USDT perpetual). Must be called before placing orders. */
+  async setLeverage(leverage: number, symbol: string): Promise<void> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    if (!Number.isInteger(leverage) || leverage < 1) throw new Error(`Invalid leverage: ${leverage}`);
+    const levStr = String(leverage);
+    await this.client.setLeverage({
+      category: 'linear',
+      symbol,
+      buyLeverage: levStr,
+      sellLeverage: levStr,
+    });
   }
 
   async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {

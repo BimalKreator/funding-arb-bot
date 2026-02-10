@@ -115,8 +115,9 @@ export class AutoEntryService {
       bybitSide: (candidate.bybitAction === 'LONG' ? 'BUY' : 'SELL') as 'BUY' | 'SELL',
     };
     try {
-      await this.tradeService.executeArbitrage(symbol, quantity, strategy);
-      console.log(`Auto-Entry Triggered for ${symbol} with ${quantity}`);
+      const leverage = Math.max(1, Math.floor(cfg.autoLeverage)) || 1;
+      await this.tradeService.executeArbitrage(symbol, quantity, strategy, leverage);
+      console.log(`Auto-Entry Triggered for ${symbol} with ${quantity} @ ${leverage}x`);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Auto-Entry failed for ${symbol}:`, errMsg);
