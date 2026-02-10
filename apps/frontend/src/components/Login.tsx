@@ -43,7 +43,7 @@ export function Login() {
           <img
             src="/logo.png"
             alt="Logo"
-            className="h-12 w-full max-w-[200px] object-contain object-center"
+            className="h-24 w-full max-w-[400px] object-contain object-center"
           />
         </div>
         <h1 className="mb-6 text-center text-lg font-medium text-zinc-100">
