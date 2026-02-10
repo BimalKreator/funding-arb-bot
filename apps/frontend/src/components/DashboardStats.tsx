@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { API_BASE } from '../config';
 import { apiFetch } from '../api';
 
-const POLL_MS = 5000;
+const POLL_MS = 5000; // 5s for realtime balance and growth
 
 export interface StatsData {
   currentBalance: number;
@@ -66,7 +66,19 @@ export function DashboardStats() {
   const totalBal = s.breakdown.binance.bal + s.breakdown.bybit.bal;
   const totalMargin = s.breakdown.binance.margin + s.breakdown.bybit.margin;
   const totalFree = s.breakdown.binance.free + s.breakdown.bybit.free;
-  const growthPositive = s.growthPercent >= 0;
+  const currentBalance = s.currentBalance;
+  const openingBalance = s.openingBalance;
+  const OPENING_BALANCE_BASE = 260;
+  const todayGrowthPercent =
+    openingBalance > 0
+      ? ((currentBalance - openingBalance) / openingBalance) * 100
+      : 0;
+  const totalGrowthPercent =
+    OPENING_BALANCE_BASE > 0
+      ? ((currentBalance - OPENING_BALANCE_BASE) / OPENING_BALANCE_BASE) * 100
+      : 0;
+  const growthPositive = todayGrowthPercent >= 0;
+  const totalGrowthPositive = totalGrowthPercent >= 0;
 
   return (
     <div className="mx-auto max-w-7xl px-3 py-6 sm:px-6 sm:py-8">
@@ -89,17 +101,29 @@ export function DashboardStats() {
 
         <div className="rounded-xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur-sm">
           <div className="text-sm text-zinc-400">Growth & ROI</div>
+          <div className="mt-1 text-xs text-zinc-500">Today&apos;s Growth %</div>
           <div
-            className={`mt-1 text-2xl font-bold sm:text-3xl ${
+            className={`text-2xl font-bold sm:text-3xl ${
               growthPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
             }`}
           >
             {growthPositive ? '+' : ''}
-            {s.growthPercent.toFixed(2)}%
+            {todayGrowthPercent.toFixed(2)}%
           </div>
           <div className="mt-1 text-xs text-zinc-500">
             Today&apos;s Growth Amt: {s.growthAmt >= 0 ? '+' : ''}$
             {s.growthAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="mt-3 border-t border-white/10 pt-3">
+            <div className="text-xs text-zinc-500">Total Growth % (vs 260)</div>
+            <div
+              className={`text-lg font-semibold ${
+                totalGrowthPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+              }`}
+            >
+              {totalGrowthPositive ? '+' : ''}
+              {totalGrowthPercent.toFixed(2)}%
+            </div>
           </div>
           <div className="mt-3 border-t border-white/10 pt-3">
             <div className="text-xs text-zinc-400">Daily Avg ROI: {s.dailyAvgRoi.toFixed(2)}%</div>

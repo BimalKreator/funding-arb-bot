@@ -117,6 +117,8 @@ export function ActivePositions() {
     });
   };
 
+  const totalPnl = data.reduce((s, g) => s + g.totalPnl, 0);
+
   const handleClose = async (symbol: string) => {
     setClosingSymbol(symbol);
     try {
@@ -145,7 +147,22 @@ export function ActivePositions() {
     <div className="font-sans">
       <div className="mx-auto max-w-7xl px-3 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-xl font-semibold text-white sm:text-2xl">Active Positions</h1>
+          <div className="flex flex-wrap items-center gap-6">
+            <h1 className="text-xl font-semibold text-white sm:text-2xl">Active Positions</h1>
+            {data.length > 0 && (
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm text-zinc-400">Total P&L:</span>
+                <span
+                  className={`text-2xl font-bold sm:text-3xl ${
+                    totalPnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                  }`}
+                >
+                  {totalPnl >= 0 ? '+' : ''}
+                  {totalPnl.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => {

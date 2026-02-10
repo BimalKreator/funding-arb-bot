@@ -96,6 +96,7 @@ export class BalanceService {
     return Number(hist[date]) || 0;
   }
 
+  /** Returns latest balance and stats. Fetches live from exchanges on every call (no cache). Frontend should poll every 5s for realtime updates. */
   async getStats(): Promise<StatsResponse> {
     const status = await this.exchangeManager.getStatus();
     let binanceBal = 0,
