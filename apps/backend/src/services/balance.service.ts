@@ -6,9 +6,9 @@ const DATA_DIR = join(process.cwd(), 'data');
 const TRANSACTIONS_FILE = join(DATA_DIR, 'transactions.json');
 const BALANCE_HISTORY_FILE = join(DATA_DIR, 'balance_history.json');
 
-/** Hardcoded opening balance for this date. */
-const HARDCODED_OPENING_DATE = '2026-02-10';
-const HARDCODED_OPENING_BALANCE = 260;
+/** Hardcoded opening balance for this date (restart accounting from today). */
+const HARDCODED_OPENING_DATE = '2026-02-13';
+const HARDCODED_OPENING_BALANCE = 265;
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 

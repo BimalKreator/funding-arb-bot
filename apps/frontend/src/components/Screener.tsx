@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, ChevronLeft, ChevronRight, TrendingUp, Circle } from 'lucide-react';
 import type { ScreenerResultEntry } from '../types/screener';
 import { API_BASE } from '../config';
@@ -7,6 +7,10 @@ import { TradeModal } from './TradeModal';
 
 const POLL_MS = 3000;
 const PAGE_SIZE = 10;
+
+export interface ScreenerProps {
+  threshold?: number;
+}
 
 export interface BotConfig {
   autoEntryEnabled: boolean;
@@ -50,7 +54,7 @@ function symbolShort(symbol: string): string {
   return symbol.replace(/USDT$/i, '') || symbol;
 }
 
-export function Screener() {
+export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
   const [data, setData] = useState<ScreenerResultEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +63,7 @@ export function Screener() {
   const [activePositionSymbols, setActivePositionSymbols] = useState<Set<string>>(new Set());
   const [config, setConfig] = useState<BotConfig | null>(null);
 
-  const screenerMinSpread = config?.screenerMinSpread ?? 0;
+  const screenerMinSpread = threshold;
 
   const fetchPositions = useCallback(async () => {
     try {
@@ -85,7 +89,7 @@ export function Screener() {
 
   const fetchScreener = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_BASE}/screener?threshold=${screenerMinSpread}`);
+      const res = await apiFetch(`${API_BASE}/screener?threshold=${encodeURIComponent(String(threshold))}`);
       if (!res.ok) throw new Error(res.statusText);
       const json: ScreenerResultEntry[] = await res.json();
       setData(json);
@@ -95,7 +99,7 @@ export function Screener() {
     } finally {
       setLoading(false);
     }
-  }, [screenerMinSpread]);
+  }, [threshold]);
 
   useEffect(() => {
     setLoading(true);

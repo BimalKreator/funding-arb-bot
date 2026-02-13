@@ -1,5 +1,20 @@
 [
   {
+    "closedAt": "2026-02-13T15:35:01.213Z",
+    "symbol": "BSVUSDT",
+    "size": 5.7,
+    "entryPrice": 16.671181579035,
+    "markPrice": 17.33,
+    "exitPrice": 17.33,
+    "pnl": -0.05482996000000018,
+    "roiPercent": -0.08315847235869327,
+    "margin": 65.93430404,
+    "reason": "Auto-Exit: Negative Spread",
+    "exchangeFee": 0,
+    "totalFundingReceived": 0,
+    "id": "ct-1770996901395-i4pzcq9"
+  },
+  {
     "closedAt": "2026-02-10T04:03:50.123Z",
     "symbol": "LAUSDT",
     "size": 487.1,
