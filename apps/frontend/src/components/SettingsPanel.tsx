@@ -10,11 +10,14 @@ export interface BotConfig {
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
+  maxActiveTrades: number;
 }
 
 const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
 const CAPITAL_MIN = 0.05;
 const CAPITAL_MAX = 0.5;
+const MAX_ACTIVE_TRADES_MIN = 1;
+const MAX_ACTIVE_TRADES_MAX = 20;
 
 export function SettingsPanel() {
   const [config, setConfig] = useState<BotConfig | null>(null);
@@ -94,6 +97,19 @@ export function SettingsPanel() {
 
   const applyScreenerMinSpreadToBackend = useCallback(() => {
     if (config) updateBackend({ screenerMinSpread: config.screenerMinSpread });
+  }, [config, updateBackend]);
+
+  const setMaxActiveTrades = (value: number) => {
+    if (!config) return;
+    const clamped = Math.max(
+      MAX_ACTIVE_TRADES_MIN,
+      Math.min(MAX_ACTIVE_TRADES_MAX, Math.floor(Number.isFinite(value) ? value : config.maxActiveTrades))
+    );
+    setConfig((c) => (c ? { ...c, maxActiveTrades: clamped } : null));
+  };
+
+  const applyMaxActiveTradesToBackend = useCallback(() => {
+    if (config) updateBackend({ maxActiveTrades: config.maxActiveTrades });
   }, [config, updateBackend]);
 
   if (loading && !config) {
@@ -248,6 +264,23 @@ export function SettingsPanel() {
                         onBlur={applyScreenerMinSpreadToBackend}
                         className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
                       />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm text-zinc-300">Max Active Trades</label>
+                      <input
+                        type="number"
+                        min={MAX_ACTIVE_TRADES_MIN}
+                        max={MAX_ACTIVE_TRADES_MAX}
+                        step={1}
+                        value={c.maxActiveTrades ?? 3}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          if (!Number.isNaN(v)) setMaxActiveTrades(v);
+                        }}
+                        onBlur={applyMaxActiveTradesToBackend}
+                        className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
+                      />
+                      <p className="mt-0.5 text-xs text-zinc-500">Auto-entry stops when this many positions are open.</p>
                     </div>
                   </div>
                 </div>

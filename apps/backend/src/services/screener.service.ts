@@ -1,13 +1,18 @@
 import type { FundingService } from './funding.service.js';
+import type { InstrumentService } from './InstrumentService.js';
 import type { ScreenerResultEntry } from '@funding-arb-bot/shared';
 
 const DEFAULT_THRESHOLD = 0;
 
 /**
  * Funding arbitrage screener: only valid-interval symbols, spread and direction.
+ * Includes blacklisted tokens with isBlacklisted/blacklistedUntil so UI can show them.
  */
 export class ScreenerService {
-  constructor(private readonly fundingService: FundingService) {}
+  constructor(
+    private readonly fundingService: FundingService,
+    private readonly instrumentService?: InstrumentService
+  ) {}
 
   /**
    * Returns screener results for symbols with status === 'valid'.
@@ -48,6 +53,9 @@ export class ScreenerService {
       const binanceMarkPriceRaw = binanceMp != null ? parseFloat(binanceMp) : NaN;
       const bybitMarkPriceRaw = bybitMp != null ? parseFloat(bybitMp) : NaN;
 
+      const isBlacklisted = this.instrumentService?.isBlacklisted(symbol) ?? false;
+      const blacklistedUntil = this.instrumentService?.getBlacklistedUntil(symbol);
+
       results.push({
         symbol,
         interval,
@@ -59,6 +67,8 @@ export class ScreenerService {
         bybitAction,
         binanceMarkPrice: Number.isFinite(binanceMarkPriceRaw) ? binanceMarkPriceRaw : undefined,
         bybitMarkPrice: Number.isFinite(bybitMarkPriceRaw) ? bybitMarkPriceRaw : undefined,
+        isBlacklisted,
+        ...(blacklistedUntil !== undefined && { blacklistedUntil }),
       });
     }
 

@@ -4,6 +4,11 @@ import { join } from 'path';
 const DATA_DIR = join(process.cwd(), 'data');
 const CONFIG_FILE = join(DATA_DIR, 'config.json');
 
+export const ALLOWED_INTERVAL_OPTIONS = [1, 2, 4, 8] as const;
+
+const MAX_ACTIVE_TRADES_MIN = 1;
+const MAX_ACTIVE_TRADES_MAX = 20;
+
 export interface BotConfig {
   autoEntryEnabled: boolean;
   autoExitEnabled: boolean;
@@ -11,6 +16,10 @@ export interface BotConfig {
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
+  /** Funding intervals (hours) allowed for trading; e.g. [1, 4, 8]. Empty or missing = all. */
+  allowedFundingIntervals: number[];
+  /** Max number of active trades (auto-entry stops when reached). */
+  maxActiveTrades: number;
 }
 
 const DEFAULTS: BotConfig = {
@@ -20,6 +29,8 @@ const DEFAULTS: BotConfig = {
   capitalPercent: 0.25,
   autoLeverage: 1,
   screenerMinSpread: 0,
+  allowedFundingIntervals: [...ALLOWED_INTERVAL_OPTIONS],
+  maxActiveTrades: 3,
 };
 
 function clampCapitalPercent(v: number): number {
@@ -42,6 +53,19 @@ function clampScreenerMinSpread(v: number): number {
   return Math.max(-100, Math.min(100, v));
 }
 
+function normalizeAllowedFundingIntervals(arr: unknown): number[] {
+  if (!Array.isArray(arr)) return [...DEFAULTS.allowedFundingIntervals];
+  const valid = arr
+    .map((x) => Number(x))
+    .filter((n) => Number.isInteger(n) && ALLOWED_INTERVAL_OPTIONS.includes(n as 1 | 2 | 4 | 8));
+  return [...new Set(valid)].sort((a, b) => a - b);
+}
+
+function clampMaxActiveTrades(v: number): number {
+  if (!Number.isFinite(v) || v < MAX_ACTIVE_TRADES_MIN) return DEFAULTS.maxActiveTrades;
+  return Math.min(MAX_ACTIVE_TRADES_MAX, Math.max(MAX_ACTIVE_TRADES_MIN, Math.floor(v)));
+}
+
 export class ConfigService {
   private cache: BotConfig | null = null;
 
@@ -57,6 +81,8 @@ export class ConfigService {
         capitalPercent: clampCapitalPercent(Number(parsed.capitalPercent)),
         autoLeverage: clampLeverage(Number(parsed.autoLeverage)),
         screenerMinSpread: clampScreenerMinSpread(Number(parsed.screenerMinSpread)),
+        allowedFundingIntervals: normalizeAllowedFundingIntervals(parsed.allowedFundingIntervals),
+        maxActiveTrades: clampMaxActiveTrades(Number(parsed.maxActiveTrades)),
       };
       return this.cache;
     } catch {
@@ -74,6 +100,14 @@ export class ConfigService {
       capitalPercent: partial.capitalPercent !== undefined ? clampCapitalPercent(Number(partial.capitalPercent)) : current.capitalPercent,
       autoLeverage: partial.autoLeverage !== undefined ? clampLeverage(Number(partial.autoLeverage)) : current.autoLeverage,
       screenerMinSpread: partial.screenerMinSpread !== undefined ? clampScreenerMinSpread(Number(partial.screenerMinSpread)) : current.screenerMinSpread,
+      allowedFundingIntervals:
+        partial.allowedFundingIntervals !== undefined
+          ? normalizeAllowedFundingIntervals(partial.allowedFundingIntervals)
+          : current.allowedFundingIntervals,
+      maxActiveTrades:
+        partial.maxActiveTrades !== undefined
+          ? clampMaxActiveTrades(Number(partial.maxActiveTrades))
+          : current.maxActiveTrades,
     };
     await mkdir(DATA_DIR, { recursive: true });
     await writeFile(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf-8');

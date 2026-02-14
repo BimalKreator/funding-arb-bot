@@ -2,11 +2,16 @@ import type { ConfigService } from './config.service.js';
 import type { PositionService } from './position.service.js';
 import type { NotificationService } from './notification.service.js';
 import type { FundingService } from './funding.service.js';
+import {
+  setMonitoringStatus,
+  clearMonitoringStatus,
+} from './position-monitoring-state.js';
 
 const RUN_INTERVAL_MS = 30_000; // 30 seconds for spread threshold check
 const GRACE_PERIOD_MS = 60_000;
 const FUNDING_FLIP_INTERVAL_MS = 60_000; // 1 minute
-const WINDOW_BEFORE_FUNDING_MS = 10 * 60 * 1000; // 10 minutes before next funding
+/** Only close when within this window of next funding; otherwise just mark "Monitoring". */
+const CRITICAL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes before next funding
 
 /** Next funding times UTC: 00:00, 08:00, 16:00 (8h intervals). Returns ms from now until next. */
 function getMsUntilNextFundingUTC(): number {
@@ -104,14 +109,17 @@ export class AutoExitService {
   }
 
   /**
-   * Spread threshold exit: if live net spread (in %) drops below screenerMinSpread, exit.
-   * Uses ConfigService for dynamic screenerMinSpread. Only runs when autoExitEnabled is true.
+   * Spread threshold: if net spread drops below screenerMinSpread:
+   * - Time to funding > 10 min: set status "⚠️ Monitoring: Low Spread", do NOT close.
+   * - Time to funding <= 10 min: re-check; if still below threshold, close immediately.
    */
   private async checkNegativeSpreads(): Promise<void> {
     const cfg = await this.configService.getConfig();
     if (!cfg.autoExitEnabled) return;
     if (!this.fundingService) return;
     const threshold = Number.isFinite(cfg.screenerMinSpread) ? cfg.screenerMinSpread : 0;
+    const msUntilFunding = getMsUntilNextFundingUTC();
+
     try {
       const groups = await this.positionService.getPositions();
       const rates = this.fundingService.getLatestFundingRates();
@@ -132,25 +140,35 @@ export class AutoExitService {
         const bybitRate = parseFloat(bybitRateStr);
         if (!Number.isFinite(binanceRate) || !Number.isFinite(bybitRate)) continue;
 
-        // Short Bin / Long Byb: (BinanceRate - BybitRate) * 100
-        // Long Bin / Short Byb: (BybitRate - BinanceRate) * 100
         const currentNetSpread =
           binanceLeg.side === 'LONG'
             ? (bybitRate - binanceRate) * 100
             : (binanceRate - bybitRate) * 100;
 
-        if (currentNetSpread < threshold) {
-          console.log(
-            `[AutoExit] Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% dropped below threshold ${threshold}%.`
-          );
-          this.notificationService?.add(
-            'WARNING',
-            'Spread Threshold Exit',
-            `Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% dropped below threshold ${threshold}% for ${group.symbol}.`,
-            { symbol: group.symbol, currentNetSpread, threshold, reason: 'screenerMinSpread' }
-          );
-          await this.positionService.closePosition(group.symbol, 'Auto-Exit: Negative Spread');
+        if (currentNetSpread >= threshold) {
+          clearMonitoringStatus(group.symbol);
+          continue;
         }
+
+        if (msUntilFunding > CRITICAL_WINDOW_MS || msUntilFunding < 0) {
+          setMonitoringStatus(group.symbol, '⚠️ Monitoring: Low Spread');
+          console.log(
+            `[AutoExit] Spread ${currentNetSpread.toFixed(4)}% below threshold ${threshold}%; time to funding ${(msUntilFunding / 60000).toFixed(1)} min. Not closing — monitoring.`
+          );
+          continue;
+        }
+
+        console.log(
+          `[AutoExit] Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% still below threshold ${threshold}% within 10 min of funding. Closing.`
+        );
+        this.notificationService?.add(
+          'WARNING',
+          'Spread Threshold Exit',
+          `Auto-Exit: Spread ${currentNetSpread.toFixed(4)}% below threshold ${threshold}% for ${group.symbol} (within critical window).`,
+          { symbol: group.symbol, currentNetSpread, threshold, reason: 'screenerMinSpread' }
+        );
+        await this.positionService.closePosition(group.symbol, 'Auto-Exit: Negative Spread');
+        clearMonitoringStatus(group.symbol);
       }
     } catch (err) {
       console.error(
@@ -161,7 +179,9 @@ export class AutoExitService {
   }
 
   /**
-   * Funding flip protection: if we're within 10 min of next funding and predicted net spread <= 0, exit.
+   * Funding flip: if net funding rate becomes negative:
+   * - Time to funding > 10 min: set status "⚠️ Monitoring: Funding Flipped", do NOT close.
+   * - Time to funding <= 10 min: re-check; if still <= 0, close immediately.
    */
   async checkFundingFlips(): Promise<void> {
     const cfg = await this.configService.getConfig();
@@ -169,8 +189,6 @@ export class AutoExitService {
     if (!this.fundingService) return;
     try {
       const msUntilFunding = getMsUntilNextFundingUTC();
-      if (msUntilFunding > WINDOW_BEFORE_FUNDING_MS || msUntilFunding < 0) return;
-
       const groups = await this.positionService.getPositions();
       const rates = this.fundingService.getLatestFundingRates();
 
@@ -193,18 +211,30 @@ export class AutoExitService {
         const netSpread =
           binanceLeg.side === 'LONG' ? bybitRate - binanceRate : binanceRate - bybitRate;
 
-        if (netSpread <= 0) {
-          console.log(
-            `[AutoExit] Funding flip exit for ${group.symbol}: netSpread=${netSpread.toFixed(6)}`
-          );
-          this.notificationService?.add(
-            'WARNING',
-            'Funding Flip Exit',
-            `Exited ${group.symbol} due to negative predicted spread before funding.`,
-            { symbol: group.symbol, netSpread, reason: 'Sync Exit triggered' }
-          );
-          await this.positionService.closePosition(group.symbol, 'Auto-Exit: Funding Flip');
+        if (netSpread > 0) {
+          clearMonitoringStatus(group.symbol);
+          continue;
         }
+
+        if (msUntilFunding > CRITICAL_WINDOW_MS || msUntilFunding < 0) {
+          setMonitoringStatus(group.symbol, '⚠️ Monitoring: Funding Flipped');
+          console.log(
+            `[AutoExit] Funding flipped for ${group.symbol} (netSpread=${netSpread.toFixed(6)}); time to funding ${(msUntilFunding / 60000).toFixed(1)} min. Not closing — monitoring.`
+          );
+          continue;
+        }
+
+        console.log(
+          `[AutoExit] Funding flip exit for ${group.symbol}: netSpread=${netSpread.toFixed(6)} (within critical window).`
+        );
+        this.notificationService?.add(
+          'WARNING',
+          'Funding Flip Exit',
+          `Exited ${group.symbol} due to negative spread before funding.`,
+          { symbol: group.symbol, netSpread, reason: 'Sync Exit triggered' }
+        );
+        await this.positionService.closePosition(group.symbol, 'Auto-Exit: Funding Flip');
+        clearMonitoringStatus(group.symbol);
       }
     } catch (err) {
       console.error(

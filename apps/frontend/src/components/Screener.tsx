@@ -19,6 +19,8 @@ export interface BotConfig {
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
+  allowedFundingIntervals?: number[];
+  maxActiveTrades?: number;
 }
 
 /** Rates and spreads from API are already in percentage (e.g. 0.01 = 0.01%) */
@@ -54,6 +56,21 @@ function symbolShort(symbol: string): string {
   return symbol.replace(/USDT$/i, '') || symbol;
 }
 
+/** Format ms until timestamp as "Xh Ym Zs" or "Avail in 14m 20s". */
+function formatAvailIn(untilMs: number, nowMs: number): string {
+  const rem = Math.max(0, untilMs - nowMs);
+  const s = Math.floor((rem / 1000) % 60);
+  const m = Math.floor((rem / 60_000) % 60);
+  const h = Math.floor(rem / 3_600_000);
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return 'Avail in ' + parts.join(' ');
+}
+
+const INTERVAL_OPTIONS = [1, 2, 4, 8] as const;
+
 export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
   const [data, setData] = useState<ScreenerResultEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,8 +79,25 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
   const [tradeRow, setTradeRow] = useState<ScreenerResultEntry | null>(null);
   const [activePositionSymbols, setActivePositionSymbols] = useState<Set<string>>(new Set());
   const [config, setConfig] = useState<BotConfig | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [allowedIntervals, setAllowedIntervals] = useState<Set<number>>(new Set(INTERVAL_OPTIONS));
 
   const screenerMinSpread = threshold;
+
+  // Sync allowed intervals from config on load / poll
+  useEffect(() => {
+    if (config?.allowedFundingIntervals === undefined || config?.allowedFundingIntervals === null) {
+      setAllowedIntervals(new Set(INTERVAL_OPTIONS));
+      return;
+    }
+    setAllowedIntervals(new Set(config.allowedFundingIntervals));
+  }, [config?.allowedFundingIntervals]);
+
+  // Update banned countdown every second
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const fetchPositions = useCallback(async () => {
     try {
@@ -118,11 +152,33 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
     return () => clearInterval(id);
   }, [fetchPositions, fetchConfig]);
 
-  const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
+  const filteredData = data.filter((row) => allowedIntervals.has(row.interval));
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
-  const slice = data.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-  const nextSymbol = data.find((row) => !activePositionSymbols.has(row.symbol) && row.netSpread > 0)?.symbol ?? null;
+  const slice = filteredData.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const nextSymbol = filteredData.find((row) => !activePositionSymbols.has(row.symbol) && row.netSpread > 0)?.symbol ?? null;
   const manualEntryEnabled = config?.manualEntryEnabled ?? true;
+
+  const setIntervalAllowed = useCallback(async (interval: number, enabled: boolean) => {
+    const next = new Set(allowedIntervals);
+    if (enabled) next.add(interval);
+    else next.delete(interval);
+    setAllowedIntervals(next);
+    const arr = Array.from(next).sort((a, b) => a - b);
+    try {
+      const res = await apiFetch(`${API_BASE}/settings/intervals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowedFundingIntervals: arr }),
+      });
+      if (res.ok) {
+        const json: BotConfig = await res.json();
+        setConfig((c) => (c ? { ...c, allowedFundingIntervals: json.allowedFundingIntervals } : null));
+      }
+    } catch {
+      setAllowedIntervals(allowedIntervals);
+    }
+  }, [allowedIntervals]);
 
   return (
     <div className="font-sans">
@@ -153,6 +209,28 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
           </div>
         </div>
 
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+          <span className="text-sm font-medium text-zinc-400">Funding intervals (trade):</span>
+          {INTERVAL_OPTIONS.map((h) => {
+            const enabled = allowedIntervals.has(h);
+            return (
+              <button
+                key={h}
+                type="button"
+                onClick={() => setIntervalAllowed(h, !enabled)}
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                  enabled
+                    ? 'border-electric bg-electric/20 text-white'
+                    : 'border-white/20 bg-white/5 text-zinc-500 hover:bg-white/10'
+                }`}
+              >
+                {h}h
+              </button>
+            );
+          })}
+          <span className="text-xs text-zinc-500">Uncheck to hide from table and disable bot trading.</span>
+        </div>
+
         <div className="overflow-hidden rounded-xl border border-white/10 bg-white/5 shadow-xl backdrop-blur-sm">
           {error && (
             <div className="border-b border-white/10 bg-red-500/10 px-4 py-3 text-sm text-red-400">
@@ -170,31 +248,35 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
                   <th className="px-4 py-3 font-medium">Gross Spread</th>
                   <th className="px-4 py-3 font-medium">Net Spread</th>
                   <th className="px-4 py-3 font-medium">Strategy</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="text-zinc-300">
                 {loading && data.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
                       Loading…
                     </td>
                   </tr>
                 ) : slice.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
-                      No results. Adjust threshold or wait for data.
+                    <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
+                      No results. Enable interval toggles above or wait for data.
                     </td>
                   </tr>
                 ) : (
                   slice.map((row) => {
                     const isActive = activePositionSymbols.has(row.symbol);
                     const isNext = nextSymbol === row.symbol;
+                    const isBlacklisted = row.isBlacklisted === true && row.blacklistedUntil != null;
+                    const availIn = isBlacklisted && row.blacklistedUntil ? formatAvailIn(row.blacklistedUntil, now) : null;
+                    const canTrade = manualEntryEnabled && !isBlacklisted;
                     return (
                     <tr
                       key={row.symbol}
                       className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
-                        isActive ? 'bg-green-500/10' : ''
+                        isActive ? 'bg-green-500/10' : isBlacklisted ? 'bg-red-500/5' : ''
                       }`}
                     >
                       <td className="px-4 py-3 font-medium text-white">
@@ -229,11 +311,25 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-zinc-300">{formatStrategy(row)}</td>
+                      <td className="px-4 py-3">
+                        {isBlacklisted ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="inline-flex w-fit items-center gap-1 rounded bg-red-500/20 px-1.5 py-0.5 text-xs font-medium text-red-400">
+                              🚫 Banned
+                            </span>
+                            {availIn && (
+                              <span className="text-xs text-zinc-500">{availIn}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-zinc-500">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
-                          onClick={() => manualEntryEnabled && setTradeRow(row)}
-                          disabled={!manualEntryEnabled}
+                          onClick={() => canTrade && setTradeRow(row)}
+                          disabled={!canTrade}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-electric px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <TrendingUp className="h-3.5 w-3.5" />
@@ -248,11 +344,11 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
             </table>
           </div>
 
-          {data.length > PAGE_SIZE && (
+          {filteredData.length > PAGE_SIZE && (
             <div className="flex items-center justify-between border-t border-white/10 px-4 py-3">
               <span className="text-sm text-zinc-500">
-                {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, data.length)}{' '}
-                of {data.length}
+                {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, filteredData.length)}{' '}
+                of {filteredData.length}
               </span>
               <div className="flex gap-2">
                 <button

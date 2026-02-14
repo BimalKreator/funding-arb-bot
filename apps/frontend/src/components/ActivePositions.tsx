@@ -27,6 +27,8 @@ export interface PositionGroup {
   isFundingFlipped: boolean;
   /** Next funding time (UTC) as timestamp in ms for countdown. */
   nextFundingTime?: number;
+  /** Grace-period monitoring label from backend (e.g. "⚠️ Monitoring: Funding Flipped"). */
+  monitoringStatus?: string | null;
 }
 
 function symbolShort(symbol: string): string {
@@ -245,6 +247,11 @@ export function ActivePositions() {
                               {group.isFundingFlipped && (
                                 <span className="animate-pulse rounded bg-red-500/30 px-1.5 py-0.5 text-xs font-medium text-red-400">
                                   Funding Flipped
+                                </span>
+                              )}
+                              {group.monitoringStatus && (
+                                <span className="rounded bg-amber-500/30 px-1.5 py-0.5 text-xs font-medium text-amber-400" title={group.monitoringStatus}>
+                                  {group.monitoringStatus}
                                 </span>
                               )}
                             </div>

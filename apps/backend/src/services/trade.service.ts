@@ -1,5 +1,6 @@
 import type { ExchangeId, OrderResult } from '@funding-arb-bot/shared';
 import type { ExchangeManager } from './exchange/index.js';
+import type { InstrumentService } from './InstrumentService.js';
 import type { NotificationService } from './notification.service.js';
 
 export interface ArbitrageStrategy {
@@ -21,7 +22,8 @@ const REBALANCE_MIN_AGE_MS = 60_000; // 60 seconds
 export class TradeService {
   constructor(
     private readonly exchangeManager: ExchangeManager,
-    private readonly notificationService?: NotificationService
+    private readonly notificationService?: NotificationService,
+    private readonly instrumentService?: InstrumentService
   ) {}
 
   async executeArbitrage(
@@ -31,6 +33,9 @@ export class TradeService {
     leverage: number,
     markPrice?: number
   ): Promise<ExecuteArbitrageResult> {
+    if (this.instrumentService?.isBlacklisted(symbol)) {
+      throw new Error(`Symbol ${symbol} is blacklisted (24h).`);
+    }
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error('Invalid quantity');
     }
@@ -38,7 +43,8 @@ export class TradeService {
       throw new Error('Invalid leverage');
     }
 
-    const estimatedNotional = Number.isFinite(markPrice) && markPrice > 0 ? quantity * markPrice : 0;
+    const price = markPrice ?? 0;
+    const estimatedNotional = Number.isFinite(price) && price > 0 ? quantity * price : 0;
     if (estimatedNotional > 0 && estimatedNotional < MIN_NOTIONAL_USD) {
       console.log(
         `Skipping trade for ${symbol}: Notional value $${estimatedNotional.toFixed(2)} is below $${MIN_NOTIONAL_USD} limit.`

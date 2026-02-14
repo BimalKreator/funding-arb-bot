@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "build:shared": "npm run build -w packages/shared",
-    "build:backend": "npm run build -w apps/backend",
+    "build:backend": "npm run build:shared && npm run build -w apps/backend",
     "build:frontend": "npm run build -w apps/frontend",
     "dev": "npm run dev --workspaces --if-present",
     "dev:backend": "npm run dev -w apps/backend",

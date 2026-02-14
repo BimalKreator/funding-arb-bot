@@ -45,4 +45,8 @@ export interface ScreenerResultEntry {
   /** Mark price (for TradeModal) */
   binanceMarkPrice?: number;
   bybitMarkPrice?: number;
+  /** True if symbol is blacklisted (e.g. after rollback/error). */
+  isBlacklisted?: boolean;
+  /** Timestamp (ms) until which the symbol remains blacklisted. */
+  blacklistedUntil?: number;
 }

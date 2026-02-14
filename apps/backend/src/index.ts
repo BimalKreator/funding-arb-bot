@@ -24,6 +24,8 @@ import { createTransactionsRouter } from './routes/transactions.js';
 import { BalanceService } from './services/balance.service.js';
 import { ConfigService } from './services/config.service.js';
 import { createConfigRouter } from './routes/config.js';
+import { createSettingsRouter } from './routes/settings.js';
+import { InstrumentService } from './services/InstrumentService.js';
 import { config } from './config.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -47,7 +49,12 @@ const fundingService = new FundingService({
 });
 app.use('/api/funding', createFundingRouter(fundingService));
 
-const screenerService = new ScreenerService(fundingService);
+const instrumentService = new InstrumentService({
+  bybitTestnet: config.exchanges.bybit.testnet,
+});
+instrumentService.start();
+
+const screenerService = new ScreenerService(fundingService, instrumentService);
 app.use('/api/screener', createScreenerRouter(screenerService));
 
 const exchangeManager = new ExchangeManager({
@@ -67,11 +74,12 @@ const exchangeManager = new ExchangeManager({
           testnet: config.exchanges.bybit.testnet,
         }
       : undefined,
+  instrumentService,
 });
 app.use('/api/exchanges', createExchangesRouter(exchangeManager));
 
 const notificationService = new NotificationService();
-const tradeService = new TradeService(exchangeManager, notificationService);
+const tradeService = new TradeService(exchangeManager, notificationService, instrumentService);
 app.use('/api/trade', createTradeRouter(tradeService));
 
 const positionService = new PositionService(exchangeManager, fundingService);
@@ -79,6 +87,7 @@ app.use('/api/positions', createPositionsRouter(positionService));
 
 const configService = new ConfigService();
 app.use('/api/config', createConfigRouter(configService));
+app.use('/api/settings', createSettingsRouter(configService));
 
 const autoExitService = new AutoExitService(
   configService,
@@ -94,7 +103,8 @@ const autoEntryService = new AutoEntryService(
   positionService,
   screenerService,
   tradeService,
-  notificationService
+  notificationService,
+  instrumentService
 );
 autoEntryService.startMonitoring();
 

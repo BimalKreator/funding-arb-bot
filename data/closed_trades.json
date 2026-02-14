@@ -1,0 +1,32 @@
+[
+  {
+    "closedAt": "2026-02-13T19:59:35.800Z",
+    "symbol": "POWERUSDT",
+    "size": 594,
+    "entryPrice": 0.28654758,
+    "markPrice": 0.25053,
+    "exitPrice": 0.25053,
+    "pnl": -21.3944445,
+    "roiPercent": -71.4584243045601,
+    "margin": 29.93970929,
+    "reason": "Manual",
+    "exchangeFee": 0,
+    "totalFundingReceived": 0,
+    "id": "ct-1771012776069-f8leuoi"
+  },
+  {
+    "closedAt": "2026-02-13T19:59:32.440Z",
+    "symbol": "POWERUSDT",
+    "size": 600,
+    "entryPrice": 0.27650263642855,
+    "markPrice": 0.25182315,
+    "exitPrice": 0.25182315,
+    "pnl": -12.943826000000001,
+    "roiPercent": -21.416662929785996,
+    "margin": 60.4381086,
+    "reason": "Manual",
+    "exchangeFee": 0,
+    "totalFundingReceived": 0,
+    "id": "ct-1771012772612-99qy8kn"
+  }
+]

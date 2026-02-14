@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PositionService } from '../services/position.service.js';
 import { getClosedTrades } from '../services/closed-trades.service.js';
+import { getMonitoringStatuses } from '../services/position-monitoring-state.js';
 
 export function createPositionsRouter(positionService: PositionService): Router {
   const router = Router();
@@ -18,7 +19,12 @@ export function createPositionsRouter(positionService: PositionService): Router 
   router.get('/', async (_req: Request, res: Response) => {
     try {
       const list = await positionService.getPositions();
-      res.json(list);
+      const statuses = getMonitoringStatuses();
+      const enriched = list.map((p) => ({
+        ...p,
+        monitoringStatus: statuses[p.symbol] ?? null,
+      }));
+      res.json(enriched);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch positions';
       res.status(500).json({ error: message });

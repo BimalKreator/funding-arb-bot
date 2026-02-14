@@ -10,6 +10,8 @@ export interface ScreenerResultEntry {
   bybitAction: 'LONG' | 'SHORT';
   binanceMarkPrice?: number;
   bybitMarkPrice?: number;
+  isBlacklisted?: boolean;
+  blacklistedUntil?: number;
 }
 
 /** Exchange status response for balances */

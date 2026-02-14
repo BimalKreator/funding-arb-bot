@@ -7,6 +7,7 @@ import type {
   OrderResult,
 } from '@funding-arb-bot/shared';
 import type { ExchangePosition } from './types.js';
+import type { InstrumentService } from '../InstrumentService.js';
 
 /** Ensure value is a valid numeric string for API; fallback to total then "0" to avoid NaN. */
 function toValidBalance(value: string | number | undefined | null, fallback: string): string {
@@ -18,12 +19,25 @@ function toValidBalance(value: string | number | undefined | null, fallback: str
   return '0.00000000';
 }
 
+export type BybitOrderErrorCallback = (symbol: string, err: unknown) => void;
+
 export class BybitFuturesClient implements ExchangeService {
   readonly id: ExchangeId = 'bybit';
   private client: RestClientV5 | null = null;
+  private onOrderError: BybitOrderErrorCallback | undefined;
 
-  constructor(options: { apiKey?: string; apiSecret?: string; testnet?: boolean }) {
-    const { apiKey, apiSecret, testnet = false } = options;
+  private instrumentService: InstrumentService | undefined;
+
+  constructor(options: {
+    apiKey?: string;
+    apiSecret?: string;
+    testnet?: boolean;
+    onOrderError?: BybitOrderErrorCallback;
+    instrumentService?: InstrumentService;
+  }) {
+    const { apiKey, apiSecret, testnet = false, onOrderError, instrumentService } = options;
+    this.onOrderError = onOrderError;
+    this.instrumentService = instrumentService;
     if (apiKey && apiSecret) {
       this.client = new RestClientV5({
         key: apiKey,
@@ -112,17 +126,40 @@ export class BybitFuturesClient implements ExchangeService {
   async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {
     if (!this.client) throw new Error('Bybit client not configured');
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid quantity for ${symbol}`);
-    const qtyStr = quantity.toFixed(5);
-    const orderRes = await this.client.submitOrder({
-      category: 'linear',
-      symbol,
-      side: side === 'BUY' ? 'Buy' : 'Sell',
-      orderType: 'Market',
-      qty: qtyStr,
-    });
-    if (orderRes.retCode !== 0) throw new Error(orderRes.retMsg ?? 'Order failed');
-    const orderId = (orderRes.result as { orderId?: string })?.orderId ?? '';
-    return { orderId, status: 'FILLED', exchangeId: 'bybit' };
+    const info = this.instrumentService?.getInstrument(symbol);
+    const qtyStr = info
+      ? (() => {
+          const step = info.qtyStep;
+          const stepDecimals = step.toString().split('.')[1]?.length ?? 0;
+          const steps = Math.floor(quantity / step);
+          const totalQty = steps * step; // total quantity (steps * step), not step count
+          const fixed = totalQty.toFixed(stepDecimals);
+          // Only strip trailing zeros after decimal point (so "600" stays "600", "0.100" → "0.1")
+          return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') || fixed : fixed;
+        })()
+      : quantity.toFixed(8).replace(/0+$/, '').replace(/\.$/, '') || quantity.toFixed(0);
+    try {
+      const orderRes = await this.client.submitOrder({
+        category: 'linear',
+        symbol,
+        side: side === 'BUY' ? 'Buy' : 'Sell',
+        orderType: 'Market',
+        qty: qtyStr,
+      });
+      if (orderRes.retCode !== 0) {
+        const err = Object.assign(new Error(orderRes.retMsg ?? 'Order failed'), {
+          retCode: orderRes.retCode,
+          retMsg: orderRes.retMsg,
+        });
+        this.onOrderError?.(symbol, err);
+        throw err;
+      }
+      const orderId = (orderRes.result as { orderId?: string })?.orderId ?? '';
+      return { orderId, status: 'FILLED', exchangeId: 'bybit' };
+    } catch (err: unknown) {
+      this.onOrderError?.(symbol, err);
+      throw err;
+    }
   }
 
   /** Total funding received for a symbol between startTime and endTime (ms). Unified Transaction Log. */

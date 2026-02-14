@@ -8,6 +8,7 @@ import type {
 import type { ExchangePosition } from './types.js';
 import { BinanceFuturesClient } from './BinanceFuturesClient.js';
 import { BybitFuturesClient } from './BybitFuturesClient.js';
+import type { InstrumentService } from '../InstrumentService.js';
 
 /** Extract a readable error message from unknown throw (Axios/API or Error). */
 export function getReadableErrorMessage(err: unknown): string {
@@ -37,6 +38,7 @@ export function getReadableErrorMessage(err: unknown): string {
 export interface ExchangeManagerConfig {
   binance?: { apiKey: string; apiSecret: string; testnet?: boolean };
   bybit?: { apiKey: string; apiSecret: string; testnet?: boolean };
+  instrumentService?: InstrumentService;
 }
 
 const ALL_EXCHANGE_IDS: ExchangeId[] = ['binance', 'bybit'];
@@ -56,12 +58,17 @@ export class ExchangeManager {
       );
     }
     if (config.bybit?.apiKey && config.bybit?.apiSecret) {
+      const instrumentService = config.instrumentService;
       this.clients.set(
         'bybit',
         new BybitFuturesClient({
           apiKey: config.bybit.apiKey,
           apiSecret: config.bybit.apiSecret,
           testnet: config.bybit.testnet,
+          onOrderError: instrumentService
+            ? (symbol, err) => instrumentService.reportOrderFailure(symbol, err)
+            : undefined,
+          instrumentService,
         })
       );
     }

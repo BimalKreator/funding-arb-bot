@@ -1,11 +1,11 @@
 import type { ConfigService } from './config.service.js';
 import type { ExchangeManager } from './exchange/index.js';
+import type { InstrumentService } from './InstrumentService.js';
 import type { NotificationService } from './notification.service.js';
 import type { PositionService } from './position.service.js';
 import type { ScreenerService } from './screener.service.js';
 import type { TradeService } from './trade.service.js';
 
-const MAX_ACTIVE_TRADES = 3;
 const INTERVAL_MS = 4000;
 const MIN_FINAL_SIZE_USDT = 6;
 const COOLDOWN_MS = 15 * 60 * 1000;
@@ -19,7 +19,8 @@ export class AutoEntryService {
     private readonly positionService: PositionService,
     private readonly screenerService: ScreenerService,
     private readonly tradeService: TradeService,
-    private readonly notificationService?: NotificationService
+    private readonly notificationService?: NotificationService,
+    private readonly instrumentService?: InstrumentService
   ) {}
 
   startMonitoring(): void {
@@ -30,10 +31,17 @@ export class AutoEntryService {
     const cfg = await this.configService.getConfig();
     if (!cfg.autoEntryEnabled) return;
 
-    // Step 1: Checks
+    // Step 1: Checks — max active trades limit
     const positions = await this.positionService.getPositions();
+    const activeCount = positions.length;
+    const maxActiveTrades = cfg.maxActiveTrades ?? 3;
+    if (activeCount >= maxActiveTrades) {
+      console.log(
+        `[AutoEntry] Skipping trade: Max active trades limit (${maxActiveTrades}) reached (${activeCount} active).`
+      );
+      return;
+    }
     const activeSymbols = new Set(positions.map((p) => p.symbol));
-    if (activeSymbols.size >= MAX_ACTIVE_TRADES) return;
 
     // Step 2: Opportunity hunting (top tokens by Net Spread DESC)
     const results = this.screenerService.getResults(0);
@@ -45,9 +53,14 @@ export class AutoEntryService {
       if (now >= expiry) this.failedTokens.delete(sym);
     }
 
+    const allowedIntervals = (cfg.allowedFundingIntervals?.length ?? 0) > 0
+      ? new Set(cfg.allowedFundingIntervals)
+      : new Set([1, 2, 4, 8]);
+
     let candidate: typeof sorted[0] | null = null;
     for (const entry of sorted) {
       if (entry.netSpread <= 0) continue;
+      if (!allowedIntervals.has(entry.interval)) continue;
       if (activeSymbols.has(entry.symbol)) continue;
       const cooldownUntil = this.failedTokens.get(entry.symbol);
       if (cooldownUntil != null && now < cooldownUntil) {
@@ -105,8 +118,19 @@ export class AutoEntryService {
       return;
     }
 
-    let quantity = (finalSize * cfg.autoLeverage) / markPrice;
-    quantity = Math.floor(quantity * 10) / 10;
+    const usdtNotional = finalSize * cfg.autoLeverage;
+    let quantity: number;
+    if (this.instrumentService) {
+      const qtyStr = this.instrumentService.calculateSafeQty(symbol, usdtNotional, markPrice);
+      if (qtyStr == null) {
+        console.log(`Skipping ${symbol}: Below Min Qty`);
+        return;
+      }
+      quantity = parseFloat(qtyStr);
+    } else {
+      quantity = usdtNotional / markPrice;
+      quantity = Math.floor(quantity * 10) / 10;
+    }
     if (quantity <= 0) return;
 
     // Step 4: Execution (one trade per cycle)
