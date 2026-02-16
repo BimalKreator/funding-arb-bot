@@ -35,6 +35,7 @@ export interface FundingIntervalsResponse {
 /** Single row for GET /api/screener (sorted by netSpread desc) */
 export interface ScreenerResultEntry {
   symbol: string;
+  /** Funding interval in hours. For mismatched rows this is the fast (smaller) interval used for tracking. */
   interval: number;
   binanceRate: number;
   bybitRate: number;
@@ -49,4 +50,15 @@ export interface ScreenerResultEntry {
   isBlacklisted?: boolean;
   /** Timestamp (ms) until which the symbol remains blacklisted. */
   blacklistedUntil?: number;
+  /** Set only for mismatched-interval rows: per-exchange interval in hours. */
+  binanceIntervalHours?: number;
+  bybitIntervalHours?: number;
+  /** Set only for mismatched-interval rows: the exchange with the smaller (fast) interval. */
+  fastExchange?: 'binance' | 'bybit';
+}
+
+/** Response shape for GET /api/screener */
+export interface ScreenerResponse {
+  standard: ScreenerResultEntry[];
+  mismatched: ScreenerResultEntry[];
 }

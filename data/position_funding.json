@@ -1,0 +1,52 @@
+{
+  "EULUSDT": {
+    "nextFundingTime": 1771171200000,
+    "fundingIntervalHours": 4,
+    "binance": {
+      "accumulatedFunding": 0
+    },
+    "bybit": {
+      "accumulatedFunding": 0
+    }
+  },
+  "VVVUSDT": {
+    "nextFundingTime": 1771243200000,
+    "fundingIntervalHours": 4,
+    "binance": {
+      "accumulatedFunding": 0
+    },
+    "bybit": {
+      "accumulatedFunding": 0
+    }
+  },
+  "MUBARAKUSDT": {
+    "nextFundingTime": 1771272000000,
+    "fundingIntervalHours": 4,
+    "binance": {
+      "accumulatedFunding": 0
+    },
+    "bybit": {
+      "accumulatedFunding": 0
+    }
+  },
+  "NOMUSDT": {
+    "nextFundingTime": 1771272000000,
+    "fundingIntervalHours": 4,
+    "binance": {
+      "accumulatedFunding": 0
+    },
+    "bybit": {
+      "accumulatedFunding": 0
+    }
+  },
+  "RPLUSDT": {
+    "nextFundingTime": 1771272000000,
+    "fundingIntervalHours": 4,
+    "binance": {
+      "accumulatedFunding": 0
+    },
+    "bybit": {
+      "accumulatedFunding": 0
+    }
+  }
+}

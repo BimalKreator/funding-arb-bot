@@ -1,5 +1,6 @@
 import { Screener } from '../components/Screener';
 import { ActivePositions } from '../components/ActivePositions';
+import { BannedTokens } from '../components/BannedTokens';
 
 export interface DashboardConfig {
   autoEntryEnabled?: boolean;
@@ -46,6 +47,7 @@ export function Dashboard({ config, onLogout, loadingConfig }: DashboardProps) {
       </section>
 
       <Screener threshold={threshold} />
+      <BannedTokens />
       <ActivePositions />
     </div>
   );

@@ -1,6 +1,18 @@
 import type { ExchangeManager } from './exchange/index.js';
 import type { FundingService } from './funding.service.js';
+import type { InstrumentService } from './InstrumentService.js';
 import { addClosedTrade } from './closed-trades.service.js';
+import { takeAccumulatedFundingForSymbol } from './position-funding-store.js';
+
+const CLOSE_CHUNKS = 3;
+const CHUNK_TIMEOUT_MS = 2000;
+
+function formatQuantity(qty: number, stepSize: number): number {
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  if (!Number.isFinite(stepSize) || stepSize <= 0) return qty;
+  const steps = Math.floor(qty / stepSize + 1e-9);
+  return steps * stepSize;
+}
 
 /** Normalize symbol for grouping (e.g. BTC/USDT:USDT -> BTCUSDT, BTCUSDT -> BTCUSDT). */
 function normalizeSymbolForGrouping(symbol: string): string {
@@ -31,6 +43,8 @@ export interface PositionLeg {
   estFundingFee: number;
   /** Position update time in ms (for orphan age check). */
   timestamp?: number;
+  /** Running total of funding earned/paid for this leg (realized). */
+  accumulatedFunding?: number;
 }
 
 /** Group of positions by symbol (e.g. BTC) with two legs. */
@@ -45,6 +59,10 @@ export interface PositionGroup {
   isFundingFlipped: boolean;
   /** Next funding time (UTC slot) as timestamp in ms for countdown. */
   nextFundingTime?: number;
+  /** Funding interval in hours (1, 2, 4, 8) for this symbol. */
+  fundingIntervalHours?: number;
+  /** Running total of funding earned/paid across both legs (realized). */
+  accumulatedFunding?: number;
 }
 
 const HEDGE_DUST = 1;
@@ -65,11 +83,24 @@ function getMsUntilNextFundingForInterval(intervalHours: number): number {
   return minutesUntil * 60 * 1000;
 }
 
+/** For mismatched intervals use fast (smaller) interval for tracking; otherwise single interval or 8. */
+function resolveIntervalForTracking(binanceH: number | null, bybitH: number | null): number {
+  if (binanceH != null && bybitH != null && binanceH !== bybitH) return Math.min(binanceH, bybitH);
+  return binanceH ?? bybitH ?? 8;
+}
+
 export class PositionService {
   constructor(
     private readonly exchangeManager: ExchangeManager,
-    private readonly fundingService: FundingService
+    private readonly fundingService: FundingService,
+    private readonly instrumentService?: InstrumentService
   ) {}
+
+  private getStepSize(symbol: string): number {
+    const bybitStep = this.instrumentService?.getInstrument(symbol)?.qtyStep;
+    const step = Number.isFinite(bybitStep) && bybitStep! > 0 ? bybitStep! : 0.001;
+    return Math.max(step, 0.001);
+  }
 
   async getPositions(): Promise<PositionGroup[]> {
     let binanceList: Awaited<ReturnType<ExchangeManager['getPositions']>> = [];
@@ -138,7 +169,7 @@ export class PositionService {
     const intervalsBySymbol = new Map(
       snapshot.intervals.map((i) => [
         i.symbol,
-        i.binanceIntervalHours ?? i.bybitIntervalHours ?? 8,
+        resolveIntervalForTracking(i.binanceIntervalHours, i.bybitIntervalHours),
       ])
     );
 
@@ -189,6 +220,7 @@ export class PositionService {
         isHedged,
         isFundingFlipped,
         nextFundingTime,
+        fundingIntervalHours: intervalHours,
       });
     }
 
@@ -225,23 +257,65 @@ export class PositionService {
     const pnl = (bin?.unrealizedPnl ?? 0) + (byb?.unrealizedPnl ?? 0);
     const roiPercent = margin > 0 ? (pnl / margin) * 100 : 0;
 
-    const closeBin = bin
-      ? this.exchangeManager.placeOrder('binance', symbol, bin.side === 'LONG' ? 'SELL' : 'BUY', bin.quantity)
-      : Promise.resolve(null);
-    const closeByb = byb
-      ? this.exchangeManager.placeOrder('bybit', symbol, byb.side === 'LONG' ? 'SELL' : 'BUY', byb.quantity)
-      : Promise.resolve(null);
-
-    const [resBin, resByb] = await Promise.allSettled([closeBin, closeByb]);
+    const chunkOpts = { splitParts: 1 as const, timeoutMs: CHUNK_TIMEOUT_MS };
     const closed: string[] = [];
     const errors: string[] = [];
+    let binanceClosed = false;
+    let bybitClosed = false;
 
-    if (bin && resBin.status === 'fulfilled' && resBin.value != null) closed.push('binance');
-    else if (bin && resBin.status === 'rejected') errors.push(`Binance: ${resBin.reason instanceof Error ? resBin.reason.message : String(resBin.reason)}`);
-    if (byb && resByb.status === 'fulfilled' && resByb.value != null) closed.push('bybit');
-    else if (byb && resByb.status === 'rejected') errors.push(`Bybit: ${resByb.reason instanceof Error ? resByb.reason.message : String(resByb.reason)}`);
+    if (bin && byb && size > 0) {
+      const effectiveStep = this.getStepSize(symbol);
+      const chunkSize = formatQuantity(size / CLOSE_CHUNKS, effectiveStep);
+      const binSide = bin.side === 'LONG' ? 'SELL' : 'BUY';
+      const bybSide = byb.side === 'LONG' ? 'SELL' : 'BUY';
+
+      for (let i = 0; i < CLOSE_CHUNKS; i++) {
+        const isLastChunk = i === CLOSE_CHUNKS - 1;
+        const remainingSize = size - chunkSize * (CLOSE_CHUNKS - 1);
+        const chunkQty = isLastChunk
+          ? formatQuantity(remainingSize, effectiveStep)
+          : chunkSize;
+        if (chunkQty <= 0) continue;
+
+        try {
+          const binanceOrder = this.exchangeManager.executeSplitOrder(
+            'binance',
+            symbol,
+            binSide,
+            chunkQty,
+            markPrice,
+            chunkOpts
+          );
+          const bybitOrder = this.exchangeManager.executeSplitOrder(
+            'bybit',
+            symbol,
+            bybSide,
+            chunkQty,
+            markPrice,
+            chunkOpts
+          );
+          await Promise.all([binanceOrder, bybitOrder]);
+          binanceClosed = true;
+          bybitClosed = true;
+        } catch (e) {
+          console.error(
+            `[PositionService] closePosition chunk ${i + 1} failed:`,
+            e instanceof Error ? e.message : e
+          );
+          errors.push(`Chunk ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+          break;
+        }
+
+        if (!isLastChunk) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+      if (binanceClosed) closed.push('binance');
+      if (bybitClosed) closed.push('bybit');
+    }
 
     if (closed.length > 0 && size > 0) {
+      const accumulatedFunding = await takeAccumulatedFundingForSymbol(symbol);
       let totalFundingReceived = 0;
       try {
         totalFundingReceived = await this.exchangeManager.getFundingBetween(symbol, openTime, closeTime);
@@ -258,7 +332,8 @@ export class PositionService {
         margin,
         reason,
         exchangeFee: 0,
-        totalFundingReceived,
+        totalFundingReceived: totalFundingReceived || 0,
+        accumulatedFunding,
       });
     }
 

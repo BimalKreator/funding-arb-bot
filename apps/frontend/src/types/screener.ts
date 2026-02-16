@@ -12,6 +12,16 @@ export interface ScreenerResultEntry {
   bybitMarkPrice?: number;
   isBlacklisted?: boolean;
   blacklistedUntil?: number;
+  /** Set only for mismatched (High Frequency) rows */
+  binanceIntervalHours?: number;
+  bybitIntervalHours?: number;
+  fastExchange?: 'binance' | 'bybit';
+}
+
+/** GET /api/screener response */
+export interface ScreenerResponse {
+  standard: ScreenerResultEntry[];
+  mismatched: ScreenerResultEntry[];
 }
 
 /** Exchange status response for balances */

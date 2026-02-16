@@ -3,6 +3,7 @@ import { Login } from './components/Login';
 import { DashboardStats } from './components/DashboardStats';
 import { ActivePositions } from './components/ActivePositions';
 import { Screener } from './components/Screener';
+import { BannedTokens } from './components/BannedTokens';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TransactionManager } from './components/TransactionManager';
 import { ClosedTrades } from './components/ClosedTrades';
@@ -19,6 +20,7 @@ function App() {
       <DashboardStats />
       <ActivePositions />
       <Screener />
+      <BannedTokens />
       <SettingsPanel />
       <TransactionManager />
       <ClosedTrades />

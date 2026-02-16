@@ -126,18 +126,7 @@ export class BybitFuturesClient implements ExchangeService {
   async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {
     if (!this.client) throw new Error('Bybit client not configured');
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid quantity for ${symbol}`);
-    const info = this.instrumentService?.getInstrument(symbol);
-    const qtyStr = info
-      ? (() => {
-          const step = info.qtyStep;
-          const stepDecimals = step.toString().split('.')[1]?.length ?? 0;
-          const steps = Math.floor(quantity / step);
-          const totalQty = steps * step; // total quantity (steps * step), not step count
-          const fixed = totalQty.toFixed(stepDecimals);
-          // Only strip trailing zeros after decimal point (so "600" stays "600", "0.100" → "0.1")
-          return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') || fixed : fixed;
-        })()
-      : quantity.toFixed(8).replace(/0+$/, '').replace(/\.$/, '') || quantity.toFixed(0);
+    const qtyStr = this.formatQty(symbol, quantity);
     try {
       const orderRes = await this.client.submitOrder({
         category: 'linear',
@@ -145,6 +134,7 @@ export class BybitFuturesClient implements ExchangeService {
         side: side === 'BUY' ? 'Buy' : 'Sell',
         orderType: 'Market',
         qty: qtyStr,
+        reduceOnly: true,
       });
       if (orderRes.retCode !== 0) {
         const err = Object.assign(new Error(orderRes.retMsg ?? 'Order failed'), {
@@ -160,6 +150,97 @@ export class BybitFuturesClient implements ExchangeService {
       this.onOrderError?.(symbol, err);
       throw err;
     }
+  }
+
+  /**
+   * Round down quantity to exchange qtyStep to avoid "Invalid Quantity" / dust errors.
+   * Uses InstrumentService when available; otherwise a conservative step (0.001) to avoid excess decimals.
+   */
+  private formatQty(symbol: string, quantity: number): string {
+    const info = this.instrumentService?.getInstrument(symbol);
+    const step = info?.qtyStep != null && info.qtyStep > 0 ? info.qtyStep : 0.001;
+    const steps = Math.floor(quantity / step + 1e-9);
+    const totalQty = steps * step;
+    const stepDecimals = step >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(step)));
+    const fixed = totalQty.toFixed(stepDecimals);
+    return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') || fixed : fixed;
+  }
+
+  /** Best bid and best ask from orderbook. For SELL use bestBid, for BUY use bestAsk. */
+  async getOrderbookTop(symbol: string): Promise<{ bestBid: number; bestAsk: number }> {
+    const client = this.client ?? new RestClientV5({});
+    const res = await client.getOrderbook({ category: 'linear', symbol, limit: 5 });
+    if (res.retCode !== 0) throw new Error(res.retMsg ?? 'Failed to get orderbook');
+    const result = res.result as { b?: [string, string][]; a?: [string, string][] };
+    const bids = result?.b ?? [];
+    const asks = result?.a ?? [];
+    const bestBid = bids.length > 0 ? parseFloat(String(bids[0][0])) : 0;
+    const bestAsk = asks.length > 0 ? parseFloat(String(asks[0][0])) : 0;
+    return { bestBid, bestAsk };
+  }
+
+  async placeLimitOrder(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number
+  ): Promise<{ orderId: string }> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`Invalid quantity/price for ${symbol}`);
+    }
+    const qtyStr = this.formatQty(symbol, quantity);
+    const priceStr = String(price);
+    try {
+      const orderRes = await this.client.submitOrder({
+        category: 'linear',
+        symbol,
+        side: side === 'BUY' ? 'Buy' : 'Sell',
+        orderType: 'Limit',
+        qty: qtyStr,
+        price: priceStr,
+        timeInForce: 'GTC',
+        reduceOnly: true,
+      });
+      if (orderRes.retCode !== 0) {
+        const err = Object.assign(new Error(orderRes.retMsg ?? 'Limit order failed'), {
+          retCode: orderRes.retCode,
+          retMsg: orderRes.retMsg,
+        });
+        this.onOrderError?.(symbol, err);
+        throw err;
+      }
+      const orderId = (orderRes.result as { orderId?: string })?.orderId ?? '';
+      return { orderId };
+    } catch (err: unknown) {
+      this.onOrderError?.(symbol, err);
+      throw err;
+    }
+  }
+
+  async getOrderStatus(symbol: string, orderId: string): Promise<'FILLED' | 'OPEN' | 'PARTIALLY_FILLED' | 'CANCELED' | 'REJECTED' | 'EXPIRED'> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    const res = await this.client.getActiveOrders({
+      category: 'linear',
+      symbol,
+      orderId,
+      limit: 1,
+    });
+    if (res.retCode !== 0) return 'OPEN';
+    const list = (res.result as { list?: Array<{ orderStatus?: string }> })?.list ?? [];
+    if (list.length === 0) return 'FILLED'; // not in active = filled or cancelled; treat as filled for flow
+    const status = String(list[0]?.orderStatus ?? '').toLowerCase();
+    if (status === 'filled') return 'FILLED';
+    if (status === 'new') return 'OPEN';
+    if (status === 'partiallyfilled') return 'PARTIALLY_FILLED';
+    if (status === 'cancelled' || status === 'rejected') return status === 'cancelled' ? 'CANCELED' : 'REJECTED';
+    return 'OPEN';
+  }
+
+  async cancelOrderById(symbol: string, orderId: string): Promise<void> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    const res = await this.client.cancelOrder({ category: 'linear', symbol, orderId });
+    if (res.retCode !== 0) throw new Error(res.retMsg ?? 'Cancel order failed');
   }
 
   /** Total funding received for a symbol between startTime and endTime (ms). Unified Transaction Log. */

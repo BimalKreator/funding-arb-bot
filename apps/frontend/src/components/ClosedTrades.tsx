@@ -17,6 +17,8 @@ export interface ClosedTradeRecord {
   reason: string;
   exchangeFee: number;
   totalFundingReceived: number;
+  /** Total accumulated funding (earned/paid) over the life of the trade. */
+  accumulatedFunding?: number;
 }
 
 function symbolShort(symbol: string): string {
@@ -95,71 +97,90 @@ export function ClosedTrades() {
                   <th className="px-4 py-3 font-medium">Margin</th>
                   <th className="px-4 py-3 font-medium">Reason</th>
                   <th className="px-4 py-3 font-medium">Exchange Fee</th>
-                  <th className="px-4 py-3 font-medium">Funding Received</th>
+                  <th className="px-4 py-3 font-medium">Total Funding</th>
                   <th className="px-4 py-3 font-medium">PNL (ROI %)</th>
+                  <th className="px-4 py-3 font-medium">Total Net PnL</th>
                 </tr>
               </thead>
               <tbody className="text-zinc-300">
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-zinc-500">
                       Loading…
                     </td>
                   </tr>
                 ) : list.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-zinc-500">
                       No closed trades yet.
                     </td>
                   </tr>
                 ) : (
-                  list.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="border-b border-white/5 transition-colors hover:bg-white/5"
-                    >
-                      <td className="px-4 py-3 font-medium text-white">
-                        {symbolShort(row.symbol)}
-                      </td>
-                      <td className="px-4 py-3">
-                        {row.size.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 6,
-                        })}
-                      </td>
-                      <td className="px-4 py-3">{row.entryPrice.toFixed(4)}</td>
-                      <td className="px-4 py-3">{row.exitPrice.toFixed(4)}</td>
-                      <td className="px-4 py-3">
-                        {row.margin.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className="inline-flex items-center gap-1"
-                          title={row.reason}
-                        >
-                          <span className="max-w-[140px] truncate" title={row.reason}>
-                            {row.reason}
+                  list.map((row) => {
+                    const totalFunding =
+                      row.accumulatedFunding ??
+                      row.totalFundingReceived ??
+                      0;
+                    const totalNetPnl =
+                      row.pnl + totalFunding - row.exchangeFee;
+                    return (
+                      <tr
+                        key={row.id}
+                        className="border-b border-white/5 transition-colors hover:bg-white/5"
+                      >
+                        <td className="px-4 py-3 font-medium text-white">
+                          {symbolShort(row.symbol)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {row.size.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 6,
+                          })}
+                        </td>
+                        <td className="px-4 py-3">{row.entryPrice.toFixed(4)}</td>
+                        <td className="px-4 py-3">{row.exitPrice.toFixed(4)}</td>
+                        <td className="px-4 py-3">
+                          {row.margin.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className="inline-flex items-center gap-1"
+                            title={row.reason}
+                          >
+                            <span className="max-w-[140px] truncate" title={row.reason}>
+                              {row.reason}
+                            </span>
+                            <span title={row.reason}>
+                              <Info
+                                className="h-3.5 w-3.5 shrink-0 text-zinc-500"
+                                aria-label="Details"
+                              />
+                            </span>
                           </span>
-                          <span title={row.reason}>
-                            <Info
-                              className="h-3.5 w-3.5 shrink-0 text-zinc-500"
-                              aria-label="Details"
-                            />
-                          </span>
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{row.exchangeFee.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-zinc-300">
-                        {row.totalFundingReceived.toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <PnlCell value={row.pnl} roiPercent={row.roiPercent} />
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="px-4 py-3">{row.exchangeFee.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-zinc-300">
+                          {totalFunding.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <PnlCell value={row.pnl} roiPercent={row.roiPercent} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <PnlCell
+                            value={totalNetPnl}
+                            roiPercent={
+                              row.margin > 0
+                                ? (totalNetPnl / row.margin) * 100
+                                : 0
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

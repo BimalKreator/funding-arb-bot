@@ -15,6 +15,7 @@ import { createPositionsRouter } from './routes/positions.js';
 import { ScreenerService } from './services/screener.service.js';
 import { TradeService } from './services/trade.service.js';
 import { PositionService } from './services/position.service.js';
+import { FundingFeeService } from './services/funding-fee.service.js';
 import { AutoExitService } from './services/auto-exit.service.js';
 import { AutoEntryService } from './services/auto-entry.service.js';
 import { NotificationService } from './services/notification.service.js';
@@ -25,12 +26,15 @@ import { BalanceService } from './services/balance.service.js';
 import { ConfigService } from './services/config.service.js';
 import { createConfigRouter } from './routes/config.js';
 import { createSettingsRouter } from './routes/settings.js';
+import { createInstrumentsRouter } from './routes/instruments.js';
 import { InstrumentService } from './services/InstrumentService.js';
+import { BannedSymbolsService } from './services/banned-symbols.service.js';
 import { config } from './config.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 
 const app = express();
+const bannedSymbolsService = new BannedSymbolsService();
 
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json());
@@ -54,9 +58,6 @@ const instrumentService = new InstrumentService({
 });
 instrumentService.start();
 
-const screenerService = new ScreenerService(fundingService, instrumentService);
-app.use('/api/screener', createScreenerRouter(screenerService));
-
 const exchangeManager = new ExchangeManager({
   binance:
     config.exchanges.binance.apiKey && config.exchanges.binance.apiSecret
@@ -79,15 +80,19 @@ const exchangeManager = new ExchangeManager({
 app.use('/api/exchanges', createExchangesRouter(exchangeManager));
 
 const notificationService = new NotificationService();
-const tradeService = new TradeService(exchangeManager, notificationService, instrumentService);
-app.use('/api/trade', createTradeRouter(tradeService));
-
-const positionService = new PositionService(exchangeManager, fundingService);
-app.use('/api/positions', createPositionsRouter(positionService));
-
 const configService = new ConfigService();
 app.use('/api/config', createConfigRouter(configService));
 app.use('/api/settings', createSettingsRouter(configService));
+app.use('/api/instruments', createInstrumentsRouter(bannedSymbolsService));
+
+const tradeService = new TradeService(exchangeManager, notificationService, instrumentService, configService);
+app.use('/api/trade', createTradeRouter(tradeService));
+
+const positionService = new PositionService(exchangeManager, fundingService, instrumentService);
+app.use('/api/positions', createPositionsRouter(positionService));
+
+const fundingFeeService = new FundingFeeService(positionService, fundingService);
+fundingFeeService.start();
 
 const autoExitService = new AutoExitService(
   configService,
@@ -97,24 +102,14 @@ const autoExitService = new AutoExitService(
 );
 autoExitService.start();
 
-const autoEntryService = new AutoEntryService(
-  configService,
-  exchangeManager,
-  positionService,
-  screenerService,
-  tradeService,
-  notificationService,
-  instrumentService
-);
-autoEntryService.startMonitoring();
-
 app.use('/api/notifications', createNotificationsRouter(notificationService));
 
 const balanceService = new BalanceService(exchangeManager);
 app.use('/api/stats', createStatsRouter(balanceService));
 app.use('/api/transactions', createTransactionsRouter(balanceService));
 
-setInterval(() => balanceService.runMidnightSnapshotIfNeeded(), HOUR_MS);
+const MIDNIGHT_CHECK_MS = 10 * 60 * 1000; // 10 min — ensures we hit 12 AM IST window
+setInterval(() => balanceService.runMidnightSnapshotIfNeeded(), MIDNIGHT_CHECK_MS);
 
 const REBALANCE_INTERVAL_MS = 30_000;
 setInterval(() => tradeService.rebalanceQuantities(), REBALANCE_INTERVAL_MS);
@@ -126,9 +121,38 @@ app.get('/api', (_req, res) => {
   res.json({ message: 'Funding Arb Bot API', version: config.version });
 });
 
-const server = app.listen(config.port, () => {
-  console.log(`Backend listening on http://localhost:${config.port}`);
-  fundingService.start();
+let server: ReturnType<typeof app.listen> | undefined;
+
+async function start(): Promise<void> {
+  await bannedSymbolsService.load();
+  const screenerService = new ScreenerService(
+    fundingService,
+    instrumentService,
+    bannedSymbolsService,
+    configService
+  );
+  app.use('/api/screener', createScreenerRouter(screenerService));
+
+  const autoEntryService = new AutoEntryService(
+    configService,
+    exchangeManager,
+    positionService,
+    screenerService,
+    tradeService,
+    notificationService,
+    instrumentService
+  );
+  autoEntryService.startMonitoring();
+
+  server = app.listen(config.port, () => {
+    console.log(`Backend listening on http://localhost:${config.port}`);
+    fundingService.start();
+  });
+}
+
+start().catch((err) => {
+  console.error('Startup failed:', err);
+  process.exit(1);
 });
 
 export { app, server };

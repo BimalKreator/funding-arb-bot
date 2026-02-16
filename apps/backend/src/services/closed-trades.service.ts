@@ -19,6 +19,9 @@ export interface ClosedTradeRecord {
   margin: number;
   reason: string;
   exchangeFee: number;
+  /** Total accumulated funding (earned/paid) over the life of the trade. */
+  accumulatedFunding?: number;
+  /** @deprecated Use accumulatedFunding. Kept for backward compatibility. */
   totalFundingReceived: number;
 }
 
@@ -43,10 +46,18 @@ async function save(list: ClosedTradeRecord[]): Promise<void> {
   inMemory = list;
 }
 
-export async function addClosedTrade(record: Omit<ClosedTradeRecord, 'id'>): Promise<ClosedTradeRecord> {
+export async function addClosedTrade(
+  record: Omit<ClosedTradeRecord, 'id'> & { totalFundingReceived?: number; accumulatedFunding?: number }
+): Promise<ClosedTradeRecord> {
   const list = await load();
   const id = `ct-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const full: ClosedTradeRecord = { ...record, id };
+  const accumulatedFunding = record.accumulatedFunding ?? record.totalFundingReceived ?? 0;
+  const full: ClosedTradeRecord = {
+    ...record,
+    id,
+    accumulatedFunding,
+    totalFundingReceived: record.totalFundingReceived ?? accumulatedFunding,
+  };
   const next = [full, ...list].slice(0, MAX_HISTORY);
   await save(next);
   return full;

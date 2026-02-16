@@ -10,12 +10,16 @@ export interface BotConfig {
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
+  /** Min execution spread % (entry guard). Default 0.22. */
+  executionSpreadThreshold?: number;
   maxActiveTrades: number;
+  /** Take profit: close when position ROI >= this %. 0 = disabled. */
+  minTakeProfitPercent?: number;
 }
 
 const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
 const CAPITAL_MIN = 0.05;
-const CAPITAL_MAX = 0.5;
+const CAPITAL_MAX = 1;
 const MAX_ACTIVE_TRADES_MIN = 1;
 const MAX_ACTIVE_TRADES_MAX = 20;
 
@@ -97,6 +101,28 @@ export function SettingsPanel() {
 
   const applyScreenerMinSpreadToBackend = useCallback(() => {
     if (config) updateBackend({ screenerMinSpread: config.screenerMinSpread });
+  }, [config, updateBackend]);
+
+  const setExecutionSpreadThreshold = (value: number) => {
+    if (!config) return;
+    const clamped = Math.max(0, Math.min(10, Number.isFinite(value) ? value : 0.22));
+    setConfig((c) => (c ? { ...c, executionSpreadThreshold: clamped } : null));
+  };
+
+  const applyExecutionSpreadThresholdToBackend = useCallback(() => {
+    if (config && config.executionSpreadThreshold !== undefined)
+      updateBackend({ executionSpreadThreshold: config.executionSpreadThreshold });
+  }, [config, updateBackend]);
+
+  const setMinTakeProfitPercent = (value: number) => {
+    if (!config) return;
+    const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+    setConfig((c) => (c ? { ...c, minTakeProfitPercent: clamped } : null));
+  };
+
+  const applyMinTakeProfitPercentToBackend = useCallback(() => {
+    if (config && config.minTakeProfitPercent !== undefined)
+      updateBackend({ minTakeProfitPercent: config.minTakeProfitPercent });
   }, [config, updateBackend]);
 
   const setMaxActiveTrades = (value: number) => {
@@ -264,6 +290,44 @@ export function SettingsPanel() {
                         onBlur={applyScreenerMinSpreadToBackend}
                         className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
                       />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm text-zinc-300">Min Execution Spread (Guard) %</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        max={10}
+                        placeholder="0.22"
+                        value={c.executionSpreadThreshold ?? ''}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (!Number.isNaN(v)) setExecutionSpreadThreshold(v);
+                          else if (e.target.value === '') setConfig((prev) => (prev ? { ...prev, executionSpreadThreshold: undefined } : null));
+                        }}
+                        onBlur={applyExecutionSpreadThresholdToBackend}
+                        className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
+                      />
+                      <p className="mt-0.5 text-xs text-zinc-500">Entry guard: trade only if orderbook spread &gt; this %.</p>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm text-zinc-300">Take Profit (ROI) %</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min={0}
+                        max={100}
+                        value={c.minTakeProfitPercent ?? ''}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (!Number.isNaN(v)) setMinTakeProfitPercent(v);
+                          else if (e.target.value === '') setConfig((prev) => (prev ? { ...prev, minTakeProfitPercent: undefined } : null));
+                        }}
+                        onBlur={applyMinTakeProfitPercentToBackend}
+                        placeholder="0"
+                        className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
+                      />
+                      <p className="mt-0.5 text-xs text-zinc-500">If position ROI hits this %, exit immediately. Set to 0 to disable.</p>
                     </div>
                     <div>
                       <label className="mb-1 block text-sm text-zinc-300">Max Active Trades</label>

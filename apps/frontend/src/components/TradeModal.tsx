@@ -13,6 +13,8 @@ export interface TradeModalProps {
   /** Used for API: Long Bin / Short Byb -> binanceSide BUY, bybitSide SELL */
   binanceAction?: 'LONG' | 'SHORT';
   bybitAction?: 'LONG' | 'SHORT';
+  /** Funding interval in hours (e.g. fast interval for High Frequency). Sent to backend for AutoExit tracking. */
+  fundingIntervalHours?: number;
 }
 
 function getUsdtAvailable(exchanges: ExchangeStatusResponse['exchanges']): { binance: number; bybit: number } {
@@ -30,7 +32,7 @@ function getUsdtAvailable(exchanges: ExchangeStatusResponse['exchanges']): { bin
   return { binance, bybit };
 }
 
-export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy, binanceAction = 'LONG', bybitAction = 'SHORT' }: TradeModalProps) {
+export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy, binanceAction = 'LONG', bybitAction = 'SHORT', fundingIntervalHours }: TradeModalProps) {
   const [balances, setBalances] = useState<{ binance: number; bybit: number }>({ binance: 0, bybit: 0 });
   const [balancesLoading, setBalancesLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
@@ -88,6 +90,7 @@ export function TradeModal({ onClose, symbol, binancePrice, bybitPrice, strategy
           strategy: { binanceSide, bybitSide },
           leverage,
           markPrice: markPrice ?? undefined,
+          ...(fundingIntervalHours != null && Number.isFinite(fundingIntervalHours) && { fundingIntervalHours }),
         }),
       });
       const data = await res.json().catch(() => ({}));

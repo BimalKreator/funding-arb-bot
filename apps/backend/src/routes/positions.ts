@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { PositionService } from '../services/position.service.js';
 import { getClosedTrades } from '../services/closed-trades.service.js';
 import { getMonitoringStatuses } from '../services/position-monitoring-state.js';
+import { getAllPositionFundingStates } from '../services/position-funding-store.js';
 
 export function createPositionsRouter(positionService: PositionService): Router {
   const router = Router();
@@ -20,10 +21,37 @@ export function createPositionsRouter(positionService: PositionService): Router 
     try {
       const list = await positionService.getPositions();
       const statuses = getMonitoringStatuses();
-      const enriched = list.map((p) => ({
-        ...p,
-        monitoringStatus: statuses[p.symbol] ?? null,
-      }));
+      const fundingStates = await getAllPositionFundingStates();
+
+      const enriched = list.map((p) => {
+        const state = fundingStates[p.symbol.toUpperCase()];
+        let monitoringStatus = statuses[p.symbol] ?? null;
+        if (!state) {
+          return {
+            ...p,
+            legs: p.legs.map((leg) => ({ ...leg, accumulatedFunding: 0 })),
+            accumulatedFunding: 0,
+            monitoringStatus,
+          };
+        }
+        const legs = p.legs.map((leg) => ({
+          ...leg,
+          accumulatedFunding:
+            leg.exchange === 'binance'
+              ? state.binance.accumulatedFunding
+              : state.bybit.accumulatedFunding,
+        }));
+        const accumulatedFunding =
+          state.binance.accumulatedFunding + state.bybit.accumulatedFunding;
+        return {
+          ...p,
+          legs,
+          nextFundingTime: state.nextFundingTime,
+          fundingIntervalHours: state.fundingIntervalHours,
+          accumulatedFunding,
+          monitoringStatus,
+        };
+      });
       res.json(enriched);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch positions';

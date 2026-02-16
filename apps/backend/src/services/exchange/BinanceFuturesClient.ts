@@ -85,6 +85,55 @@ export class BinanceFuturesClient implements ExchangeService {
     return { orderId, status: 'FILLED', exchangeId: 'binance' };
   }
 
+  /** Best bid (index 0) and best ask (index 0) from orderbook. For SELL use bestBid, for BUY use bestAsk. */
+  async getOrderbookTop(symbol: string): Promise<{ bestBid: number; bestAsk: number }> {
+    const client = this.client ?? new USDMClient();
+    const book = await client.getOrderBook({ symbol, limit: 5 });
+    const bids = (book as { bids?: [string, string][] }).bids ?? [];
+    const asks = (book as { asks?: [string, string][] }).asks ?? [];
+    const bestBid = bids.length > 0 ? parseFloat(String(bids[0][0])) : 0;
+    const bestAsk = asks.length > 0 ? parseFloat(String(asks[0][0])) : 0;
+    return { bestBid, bestAsk };
+  }
+
+  async placeLimitOrder(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number
+  ): Promise<{ orderId: string }> {
+    if (!this.client) throw new Error('Binance client not configured');
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`Invalid quantity/price for ${symbol}`);
+    }
+    const res = await this.client.submitNewOrder({
+      symbol,
+      side,
+      type: 'LIMIT',
+      timeInForce: 'GTC',
+      quantity,
+      price,
+    });
+    const orderId = String((res as { orderId?: number }).orderId ?? '');
+    return { orderId };
+  }
+
+  async getOrderStatus(symbol: string, orderId: string): Promise<'FILLED' | 'OPEN' | 'PARTIALLY_FILLED' | 'CANCELED' | 'REJECTED' | 'EXPIRED'> {
+    if (!this.client) throw new Error('Binance client not configured');
+    const order = await this.client.getOrder({ symbol, orderId: parseInt(orderId, 10) });
+    const status = String((order as { status?: string }).status ?? '').toUpperCase();
+    if (status === 'FILLED') return 'FILLED';
+    if (status === 'NEW') return 'OPEN';
+    if (status === 'PARTIALLY_FILLED') return 'PARTIALLY_FILLED';
+    if (status === 'CANCELED' || status === 'REJECTED' || status === 'EXPIRED') return status as 'CANCELED' | 'REJECTED' | 'EXPIRED';
+    return 'OPEN';
+  }
+
+  async cancelOrderById(symbol: string, orderId: string): Promise<void> {
+    if (!this.client) throw new Error('Binance client not configured');
+    await this.client.cancelOrder({ symbol, orderId: parseInt(orderId, 10) });
+  }
+
   /** Total funding fee income for a symbol between startTime and endTime (ms). */
   async getFundingIncome(symbol: string, startTime: number, endTime: number): Promise<number> {
     if (!this.client) return 0;

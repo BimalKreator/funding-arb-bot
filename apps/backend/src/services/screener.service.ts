@@ -1,33 +1,84 @@
+import type { BannedSymbolsService } from './banned-symbols.service.js';
+import type { ConfigService } from './config.service.js';
 import type { FundingService } from './funding.service.js';
 import type { InstrumentService } from './InstrumentService.js';
-import type { ScreenerResultEntry } from '@funding-arb-bot/shared';
+import type { ScreenerResultEntry, ScreenerResponse } from '@funding-arb-bot/shared';
+import type { SymbolIntervalStatus } from '@funding-arb-bot/shared';
+import { ALLOWED_INTERVAL_OPTIONS } from './config.service.js';
 
 const DEFAULT_THRESHOLD = 0;
 
 /**
- * Funding arbitrage screener: only valid-interval symbols, spread and direction.
+ * Funding arbitrage screener: Standard (same interval) and High Frequency (mismatched intervals).
  * Includes blacklisted tokens with isBlacklisted/blacklistedUntil so UI can show them.
+ * User-banned symbols (manual ban) are excluded entirely and not returned.
+ * Results are filtered by allowedFundingIntervals (config) and netSpread > 0.
  */
 export class ScreenerService {
   constructor(
     private readonly fundingService: FundingService,
-    private readonly instrumentService?: InstrumentService
+    private readonly instrumentService?: InstrumentService,
+    private readonly bannedSymbolsService?: BannedSymbolsService,
+    private readonly configService?: ConfigService
   ) {}
 
   /**
-   * Returns screener results for symbols with status === 'valid'.
-   * Sort: primary by funding interval ascending (shorter first), secondary by netSpread descending (higher first).
+   * Returns screener results: standard (Interval_A == Interval_B) and mismatched (Interval_A != Interval_B).
+   * Filtered by allowedFundingIntervals (config) and netSpread > 0. Standard: sorted by interval asc, then netSpread desc. Mismatched: sorted by netSpread desc.
    */
-  getResults(threshold: number = DEFAULT_THRESHOLD): ScreenerResultEntry[] {
+  async getResults(threshold: number = DEFAULT_THRESHOLD): Promise<ScreenerResponse> {
+    const userBanned = new Set(
+      (this.bannedSymbolsService?.getBanned() ?? []).map((s) => s.toUpperCase())
+    );
     const snapshot = this.fundingService.getIntervalsSnapshot();
-    const validSymbols = new Set(snapshot.validArbitrageSymbols);
+    const latest = this.fundingService.getLatestFundingRates();
+
+    let standard = this.buildStandardList(snapshot, userBanned, latest, threshold);
+    let mismatched = this.buildMismatchedList(snapshot, userBanned, latest, threshold);
+
+    const allowedSet = await this.getAllowedIntervalsSet();
+    standard = standard.filter(
+      (e) => allowedSet.has(e.interval) && e.grossSpread > 0
+    );
+    mismatched = mismatched.filter(
+      (e) =>
+        allowedSet.has(e.binanceIntervalHours ?? e.interval) &&
+        allowedSet.has(e.bybitIntervalHours ?? e.interval) &&
+        e.grossSpread > 0
+    );
+
+    return { standard, mismatched };
+  }
+
+  private async getAllowedIntervalsSet(): Promise<Set<number>> {
+    if (!this.configService) {
+      return new Set(ALLOWED_INTERVAL_OPTIONS);
+    }
+    const cfg = await this.configService.getConfig();
+    const arr = cfg.allowedFundingIntervals;
+    if (!Array.isArray(arr) || arr.length === 0) {
+      return new Set(ALLOWED_INTERVAL_OPTIONS);
+    }
+    return new Set(arr.filter((n) => ALLOWED_INTERVAL_OPTIONS.includes(n as 1 | 2 | 4 | 8)));
+  }
+
+  /**
+   * Standard list: symbols where Interval_A == Interval_B. Existing logic, sort by interval then netSpread.
+   */
+  private buildStandardList(
+    snapshot: { intervals: SymbolIntervalStatus[]; validArbitrageSymbols: string[] },
+    userBanned: Set<string>,
+    latest: Map<string, { binance?: { fundingRate?: string; markPrice?: string }; bybit?: { fundingRate?: string; markPrice?: string } }>,
+    threshold: number
+  ): ScreenerResultEntry[] {
+    const validSymbols = new Set(
+      snapshot.validArbitrageSymbols.filter((s) => !userBanned.has(s.toUpperCase()))
+    );
     const intervalsBySymbol = new Map(
       snapshot.intervals
         .filter((i) => i.status === 'valid')
         .map((i) => [i.symbol, i.binanceIntervalHours ?? i.bybitIntervalHours ?? 8])
     );
-    const latest = this.fundingService.getLatestFundingRates();
-
     const results: ScreenerResultEntry[] = [];
 
     for (const symbol of validSymbols) {
@@ -40,7 +91,6 @@ export class ScreenerService {
       const bybitRateRaw = parseFloat(bybitRateStr);
       if (Number.isNaN(binanceRateRaw) || Number.isNaN(bybitRateRaw)) continue;
 
-      // Convert to percentage before calculating spreads (e.g. 0.0001 → 0.01)
       const binanceRatePct = binanceRateRaw * 100;
       const bybitRatePct = bybitRateRaw * 100;
       const grossSpread = Math.abs(binanceRatePct - bybitRatePct);
@@ -74,6 +124,91 @@ export class ScreenerService {
 
     results.sort((a, b) => {
       if (a.interval !== b.interval) return a.interval - b.interval;
+      return b.netSpread - a.netSpread;
+    });
+    return results;
+  }
+
+  /**
+   * Mismatched list: symbols where Interval_A != Interval_B.
+   * Net spread = simple difference (no 24h yield).
+   * "Dominant Fast Leg" rule: ALLOW only when the high-frequency exchange is the main profit driver.
+   * - Yield_A = |rateA|, Yield_B = |rateB|. Dominant = exchange with higher yield.
+   * - ALLOW iff Dominant_Exchange.interval < Other_Exchange.interval (profit from fast leg).
+   * - REJECT if Dominant has the larger/slower interval (profit from slow leg).
+   */
+  private buildMismatchedList(
+    snapshot: { intervals: SymbolIntervalStatus[] },
+    userBanned: Set<string>,
+    latest: Map<string, { binance?: { fundingRate?: string; markPrice?: string }; bybit?: { fundingRate?: string; markPrice?: string } }>,
+    threshold: number
+  ): ScreenerResultEntry[] {
+    const mismatchedIntervals = snapshot.intervals.filter(
+      (i) => i.status === 'invalid_interval' && i.binanceIntervalHours != null && i.bybitIntervalHours != null && !userBanned.has(i.symbol.toUpperCase())
+    );
+    const results: ScreenerResultEntry[] = [];
+
+    for (const row of mismatchedIntervals) {
+      const symbol = row.symbol;
+      const binanceH = row.binanceIntervalHours!;
+      const bybitH = row.bybitIntervalHours!;
+      const fastExchange: 'binance' | 'bybit' = binanceH <= bybitH ? 'binance' : 'bybit';
+      const fastInterval = Math.min(binanceH, bybitH);
+
+      const entry = latest.get(symbol);
+      const binanceRateStr = entry?.binance?.fundingRate;
+      const bybitRateStr = entry?.bybit?.fundingRate;
+      if (binanceRateStr === undefined || bybitRateStr === undefined) continue;
+
+      const binanceRateRaw = parseFloat(binanceRateStr);
+      const bybitRateRaw = parseFloat(bybitRateStr);
+      if (Number.isNaN(binanceRateRaw) || Number.isNaN(bybitRateRaw)) continue;
+
+      const binanceRatePct = binanceRateRaw * 100;
+      const bybitRatePct = bybitRateRaw * 100;
+      const grossSpread = Math.abs(binanceRatePct - bybitRatePct);
+      const netSpread = grossSpread - threshold;
+
+      const yieldA = Math.abs(binanceRatePct);
+      const yieldB = Math.abs(bybitRatePct);
+      const dominantIsBinance = yieldA >= yieldB;
+      const dominantInterval = dominantIsBinance ? binanceH : bybitH;
+      const otherInterval = dominantIsBinance ? bybitH : binanceH;
+      if (dominantInterval >= otherInterval) continue;
+
+      const { binanceAction, bybitAction } = this.getTradeDirection(binanceRateRaw, bybitRateRaw);
+
+      const binanceMp = entry?.binance?.markPrice;
+      const bybitMp = entry?.bybit?.markPrice;
+      const binanceMarkPriceRaw = binanceMp != null ? parseFloat(binanceMp) : NaN;
+      const bybitMarkPriceRaw = bybitMp != null ? parseFloat(bybitMp) : NaN;
+
+      const isBlacklisted = this.instrumentService?.isBlacklisted(symbol) ?? false;
+      const blacklistedUntil = this.instrumentService?.getBlacklistedUntil(symbol);
+
+      results.push({
+        symbol,
+        interval: fastInterval,
+        binanceRate: binanceRatePct,
+        bybitRate: bybitRatePct,
+        grossSpread,
+        netSpread,
+        binanceAction,
+        bybitAction,
+        binanceMarkPrice: Number.isFinite(binanceMarkPriceRaw) ? binanceMarkPriceRaw : undefined,
+        bybitMarkPrice: Number.isFinite(bybitMarkPriceRaw) ? bybitMarkPriceRaw : undefined,
+        isBlacklisted,
+        ...(blacklistedUntil !== undefined && { blacklistedUntil }),
+        binanceIntervalHours: binanceH,
+        bybitIntervalHours: bybitH,
+        fastExchange,
+      });
+    }
+
+    results.sort((a, b) => {
+      const minIntervalA = Math.min(a.binanceIntervalHours ?? a.interval, a.bybitIntervalHours ?? a.interval);
+      const minIntervalB = Math.min(b.binanceIntervalHours ?? b.interval, b.bybitIntervalHours ?? b.interval);
+      if (minIntervalA !== minIntervalB) return minIntervalA - minIntervalB;
       return b.netSpread - a.netSpread;
     });
     return results;

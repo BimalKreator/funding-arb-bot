@@ -8,3 +8,4 @@ export * from './types/api.js';
 export * from './types/websocket.js';
 export * from './types/exchange.js';
 export * from './types/funding.js';
+export * from './types/position.js';

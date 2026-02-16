@@ -5,6 +5,10 @@ import { apiFetch } from '../api';
 
 const POLL_MS = 3000;
 
+interface BotConfigSlice {
+  minTakeProfitPercent?: number;
+}
+
 export interface PositionLeg {
   exchange: 'binance' | 'bybit';
   side: 'LONG' | 'SHORT';
@@ -16,6 +20,8 @@ export interface PositionLeg {
   unrealizedPnl: number;
   percentage: number;
   estFundingFee: number;
+  /** Running total of funding earned/paid for this leg (realized). */
+  accumulatedFunding?: number;
 }
 
 export interface PositionGroup {
@@ -27,6 +33,10 @@ export interface PositionGroup {
   isFundingFlipped: boolean;
   /** Next funding time (UTC) as timestamp in ms for countdown. */
   nextFundingTime?: number;
+  /** Funding interval in hours (1, 2, 4, 8). */
+  fundingIntervalHours?: number;
+  /** Running total of funding earned/paid across both legs (realized). */
+  accumulatedFunding?: number;
   /** Grace-period monitoring label from backend (e.g. "⚠️ Monitoring: Funding Flipped"). */
   monitoringStatus?: string | null;
 }
@@ -88,6 +98,18 @@ export function ActivePositions() {
   const [error, setError] = useState<string | null>(null);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
   const [expandedSymbols, setExpandedSymbols] = useState<Set<string>>(new Set());
+  const [config, setConfig] = useState<BotConfigSlice | null>(null);
+
+  const fetchConfig = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/config`);
+      if (!res.ok) return;
+      const json: BotConfigSlice = await res.json();
+      setConfig(json);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const fetchPositions = useCallback(async () => {
     try {
@@ -106,9 +128,13 @@ export function ActivePositions() {
   useEffect(() => {
     setLoading(true);
     fetchPositions();
-    const id = setInterval(fetchPositions, POLL_MS);
+    fetchConfig();
+    const id = setInterval(() => {
+      fetchPositions();
+      fetchConfig();
+    }, POLL_MS);
     return () => clearInterval(id);
-  }, [fetchPositions]);
+  }, [fetchPositions, fetchConfig]);
 
   const toggleExpand = (symbol: string) => {
     setExpandedSymbols((prev) => {
@@ -120,6 +146,18 @@ export function ActivePositions() {
   };
 
   const totalPnl = data.reduce((s, g) => s + g.totalPnl, 0);
+  const totalEstFundingNext = data.reduce((s, g) => {
+    const net = g.legs.reduce(
+      (sum, leg) =>
+        sum + (leg.side === 'LONG' ? -leg.estFundingFee : leg.estFundingFee),
+      0
+    );
+    return s + net;
+  }, 0);
+  const totalAccumulatedFunding = data.reduce(
+    (s, g) => s + (g.accumulatedFunding ?? 0),
+    0
+  );
 
   const handleClose = async (symbol: string) => {
     setClosingSymbol(symbol);
@@ -152,17 +190,27 @@ export function ActivePositions() {
           <div className="flex flex-wrap items-center gap-6">
             <h1 className="text-xl font-semibold text-white sm:text-2xl">Active Positions</h1>
             {data.length > 0 && (
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm text-zinc-400">Total P&L:</span>
-                <span
-                  className={`text-2xl font-bold sm:text-3xl ${
-                    totalPnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
-                  }`}
-                >
-                  {totalPnl >= 0 ? '+' : ''}
-                  {totalPnl.toFixed(2)}
-                </span>
-              </div>
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-zinc-400">Total P&L:</span>
+                  <span
+                    className={`text-2xl font-bold sm:text-3xl ${
+                      totalPnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                    }`}
+                  >
+                    {totalPnl >= 0 ? '+' : ''}
+                    {totalPnl.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-zinc-400">Net Est. Funding (Next):</span>
+                  <ColoredNumber value={totalEstFundingNext} decimals={4} />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-zinc-400">Net Total Funding (Realized):</span>
+                  <ColoredNumber value={totalAccumulatedFunding} decimals={4} />
+                </div>
+              </>
             )}
           </div>
           <button
@@ -193,20 +241,21 @@ export function ActivePositions() {
                   <th className="px-4 py-3 font-medium">Symbol</th>
                   <th className="px-4 py-3 font-medium">Total Size</th>
                   <th className="px-4 py-3 font-medium">Total Net PnL</th>
-                  <th className="px-4 py-3 font-medium">Est. Funding Fee</th>
+                  <th className="px-4 py-3 font-medium">Est. Funding (Next)</th>
+                  <th className="px-4 py-3 font-medium">Total Funding (Realized)</th>
                   <th className="px-4 py-3 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="text-zinc-300">
                 {loading && data.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
                       Loading…
                     </td>
                   </tr>
                 ) : data.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
                       No active positions.
                     </td>
                   </tr>
@@ -265,10 +314,36 @@ export function ActivePositions() {
                               : '—'}
                           </td>
                           <td className="px-4 py-3 font-semibold">
-                            <ColoredNumber value={group.totalPnl} />
+                            <span className="inline-flex flex-wrap items-baseline gap-1.5">
+                              <ColoredNumber value={group.totalPnl} />
+                              {config?.minTakeProfitPercent != null &&
+                                config.minTakeProfitPercent > 0 && (() => {
+                                  const totalMargin = group.legs.reduce((s, l) => s + l.margin, 0);
+                                  const targetProfit = (totalMargin * config.minTakeProfitPercent) / 100;
+                                  return (
+                                    <span className="text-xs font-normal text-zinc-400" title="Take-profit target (ROI %)">
+                                      (Target: +${targetProfit.toFixed(2)})
+                                    </span>
+                                  );
+                                })()}
+                            </span>
                           </td>
                           <td className="px-4 py-3">
-                            <ColoredNumber value={group.netFundingFee} />
+                            <ColoredNumber
+                              value={group.legs.reduce(
+                                (sum, leg) =>
+                                  sum +
+                                  (leg.side === 'LONG'
+                                    ? -leg.estFundingFee
+                                    : leg.estFundingFee),
+                                0
+                              )}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <ColoredNumber
+                              value={group.accumulatedFunding ?? 0}
+                            />
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
@@ -284,7 +359,7 @@ export function ActivePositions() {
                         </tr>
                         {isExpanded && (
                           <tr key={`${group.symbol}-details`} className="border-b border-white/5 bg-black/20">
-                            <td colSpan={6} className="p-0">
+                            <td colSpan={7} className="p-0">
                               <div className="border-t border-white/5 px-4 py-3">
                                 <table className="w-full text-left text-xs">
                                   <thead>
@@ -296,13 +371,19 @@ export function ActivePositions() {
                                       <th className="pb-2 pr-4 font-medium">Mark Price</th>
                                       <th className="pb-2 pr-4 font-medium">Liq. Price</th>
                                       <th className="pb-2 pr-4 font-medium">Margin (USDT)</th>
+                                      <th className="pb-2 pr-4 font-medium">Est. Fees (In+Out)</th>
                                       <th className="pb-2 pr-4 font-medium">PnL (USDT)</th>
                                       <th className="pb-2 pr-4 font-medium">ROI %</th>
-                                      <th className="pb-2 font-medium">Est. Funding Fee</th>
+                                      <th className="pb-2 pr-4 font-medium">Est. Funding (Next)</th>
+                                      <th className="pb-2 font-medium">Total Funding (Realized)</th>
                                     </tr>
                                   </thead>
                                   <tbody className="text-zinc-300">
-                                    {group.legs.map((leg) => (
+                                    {group.legs.map((leg) => {
+                                      const posValue = leg.size * leg.entryPrice;
+                                      const oneWayFee = posValue * 0.0005;
+                                      const totalFee = oneWayFee * 2;
+                                      return (
                                       <tr key={`${group.symbol}-${leg.exchange}`} className="border-t border-white/5">
                                         <td className="py-2 pr-4 capitalize">{leg.exchange}</td>
                                         <td className="py-2 pr-4">{leg.side}</td>
@@ -319,16 +400,33 @@ export function ActivePositions() {
                                         </td>
                                         <td className="py-2 pr-4">{leg.margin.toFixed(2)}</td>
                                         <td className="py-2 pr-4">
+                                          <span
+                                            className="text-red-400"
+                                            title="Includes estimated Entry (Realized) + Exit (Projected) fees."
+                                          >
+                                            -${totalFee.toFixed(2)}
+                                          </span>
+                                        </td>
+                                        <td className="py-2 pr-4">
                                           <ColoredNumber value={leg.unrealizedPnl} />
                                         </td>
                                         <td className="py-2 pr-4">
                                           <ColoredNumber value={leg.percentage} />
                                         </td>
+                                        <td className="py-2 pr-4">
+                                          <ColoredNumber
+                                            value={
+                                              leg.side === 'LONG'
+                                                ? -leg.estFundingFee
+                                                : leg.estFundingFee
+                                            }
+                                          />
+                                        </td>
                                         <td className="py-2">
-                                          <ColoredNumber value={leg.estFundingFee} />
+                                          <ColoredNumber value={leg.accumulatedFunding ?? 0} />
                                         </td>
                                       </tr>
-                                    ))}
+                                    ); })}
                                   </tbody>
                                 </table>
                               </div>

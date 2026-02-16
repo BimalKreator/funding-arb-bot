@@ -90,10 +90,22 @@ export class BalanceService {
     await writeJson(BALANCE_HISTORY_FILE, hist);
   }
 
+  /**
+   * Returns opening balance for the given date (YYYY-MM-DD in IST).
+   * If we have a snapshot for that date (taken at 12 AM IST), use it.
+   * Otherwise use the most recent previous day's balance so we never show 0
+   * when the server missed the midnight snapshot (e.g. was down at 12 AM IST).
+   */
   async getOpeningBalance(date: string): Promise<number> {
     if (date === HARDCODED_OPENING_DATE) return HARDCODED_OPENING_BALANCE;
     const hist = await this.getBalanceHistory();
-    return Number(hist[date]) || 0;
+    const exact = Number(hist[date]);
+    if (exact > 0) return exact;
+    const sortedDates = Object.keys(hist).filter((d) => d && hist[d] != null && hist[d] > 0).sort();
+    const prevDates = sortedDates.filter((d) => d < date);
+    if (prevDates.length === 0) return 0;
+    const lastPrev = prevDates[prevDates.length - 1];
+    return Number(hist[lastPrev]) || 0;
   }
 
   /** Returns latest balance and stats. Fetches live from exchanges on every call (no cache). Frontend should poll every 5s for realtime updates. */
@@ -219,10 +231,14 @@ export class BalanceService {
     return true;
   }
 
-  /** Call every hour: in the first hour of day IST (00:00–00:59), snapshot current balance as opening for that day. */
+  /**
+   * In the first hour of day IST (00:00–00:59), snapshot current balance and save as
+   * opening for that day ( = "closing balance of 12 AM IST" for the new day).
+   * Call this every few minutes so we don't miss the window (e.g. if server restarts).
+   */
   async runMidnightSnapshotIfNeeded(): Promise<void> {
     const now = Date.now();
-    if (now - this.lastMidnightCheck < 50 * 60 * 1000) return; // debounce ~1h
+    if (now - this.lastMidnightCheck < 5 * 60 * 1000) return; // debounce 5 min to avoid hammering
     this.lastMidnightCheck = now;
 
     const today = getTodayIST();

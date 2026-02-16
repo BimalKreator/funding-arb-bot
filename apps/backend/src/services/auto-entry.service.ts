@@ -43,9 +43,9 @@ export class AutoEntryService {
     }
     const activeSymbols = new Set(positions.map((p) => p.symbol));
 
-    // Step 2: Opportunity hunting (top tokens by Net Spread DESC)
-    const results = this.screenerService.getResults(0);
-    const sorted = [...results].sort((a, b) => b.netSpread - a.netSpread);
+    // Step 2: Opportunity hunting (top tokens by Net Spread DESC) — standard (same-interval) only; screener already filters by allowed intervals and netSpread > 0
+    const { standard } = await this.screenerService.getResults(0);
+    const sorted = [...standard].sort((a, b) => b.netSpread - a.netSpread);
 
     // Prune expired cooldowns
     const now = Date.now();
