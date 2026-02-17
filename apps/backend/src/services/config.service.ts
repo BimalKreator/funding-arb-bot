@@ -13,6 +13,8 @@ export interface BotConfig {
   autoEntryEnabled: boolean;
   autoExitEnabled: boolean;
   manualEntryEnabled: boolean;
+  /** When true, Min Execution Spread (Guard) % is enforced; when false, spread check is skipped. */
+  isEntryGuardEnabled: boolean;
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
@@ -30,6 +32,7 @@ const DEFAULTS: BotConfig = {
   autoEntryEnabled: false,
   autoExitEnabled: true,
   manualEntryEnabled: true,
+  isEntryGuardEnabled: true,
   capitalPercent: 0.25,
   autoLeverage: 1,
   screenerMinSpread: 0,
@@ -95,6 +98,7 @@ export class ConfigService {
         autoEntryEnabled: typeof parsed.autoEntryEnabled === 'boolean' ? parsed.autoEntryEnabled : DEFAULTS.autoEntryEnabled,
         autoExitEnabled: typeof parsed.autoExitEnabled === 'boolean' ? parsed.autoExitEnabled : DEFAULTS.autoExitEnabled,
         manualEntryEnabled: typeof parsed.manualEntryEnabled === 'boolean' ? parsed.manualEntryEnabled : DEFAULTS.manualEntryEnabled,
+        isEntryGuardEnabled: typeof parsed.isEntryGuardEnabled === 'boolean' ? parsed.isEntryGuardEnabled : DEFAULTS.isEntryGuardEnabled,
         capitalPercent: clampCapitalPercent(Number(parsed.capitalPercent)),
         autoLeverage: clampLeverage(Number(parsed.autoLeverage)),
         screenerMinSpread: clampScreenerMinSpread(Number(parsed.screenerMinSpread)),
@@ -116,6 +120,7 @@ export class ConfigService {
       autoEntryEnabled: typeof partial.autoEntryEnabled === 'boolean' ? partial.autoEntryEnabled : current.autoEntryEnabled,
       autoExitEnabled: typeof partial.autoExitEnabled === 'boolean' ? partial.autoExitEnabled : current.autoExitEnabled,
       manualEntryEnabled: typeof partial.manualEntryEnabled === 'boolean' ? partial.manualEntryEnabled : current.manualEntryEnabled,
+      isEntryGuardEnabled: typeof partial.isEntryGuardEnabled === 'boolean' ? partial.isEntryGuardEnabled : current.isEntryGuardEnabled,
       capitalPercent: partial.capitalPercent !== undefined ? clampCapitalPercent(Number(partial.capitalPercent)) : current.capitalPercent,
       autoLeverage: partial.autoLeverage !== undefined ? clampLeverage(Number(partial.autoLeverage)) : current.autoLeverage,
       screenerMinSpread: partial.screenerMinSpread !== undefined ? clampScreenerMinSpread(Number(partial.screenerMinSpread)) : current.screenerMinSpread,

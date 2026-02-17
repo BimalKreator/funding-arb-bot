@@ -24,6 +24,7 @@ import { createStatsRouter } from './routes/stats.js';
 import { createTransactionsRouter } from './routes/transactions.js';
 import { BalanceService } from './services/balance.service.js';
 import { ConfigService } from './services/config.service.js';
+import { getMarketDataService } from './services/market-data.service.js';
 import { createConfigRouter } from './routes/config.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createInstrumentsRouter } from './routes/instruments.js';
@@ -85,7 +86,17 @@ app.use('/api/config', createConfigRouter(configService));
 app.use('/api/settings', createSettingsRouter(configService));
 app.use('/api/instruments', createInstrumentsRouter(bannedSymbolsService));
 
-const tradeService = new TradeService(exchangeManager, notificationService, instrumentService, configService);
+const marketDataService = getMarketDataService();
+marketDataService.start(config.exchanges.binance.testnet);
+
+// TradeService(exchangeManager, notificationService, instrumentService, configService, marketDataService)
+const tradeService = new TradeService(
+  exchangeManager,
+  notificationService,
+  instrumentService,
+  configService,
+  marketDataService
+);
 app.use('/api/trade', createTradeRouter(tradeService));
 
 const positionService = new PositionService(exchangeManager, fundingService, instrumentService);
@@ -98,7 +109,8 @@ const autoExitService = new AutoExitService(
   configService,
   positionService,
   notificationService,
-  fundingService
+  fundingService,
+  exchangeManager
 );
 autoExitService.start();
 
@@ -129,7 +141,9 @@ async function start(): Promise<void> {
     fundingService,
     instrumentService,
     bannedSymbolsService,
-    configService
+    configService,
+    exchangeManager,
+    marketDataService
   );
   app.use('/api/screener', createScreenerRouter(screenerService));
 

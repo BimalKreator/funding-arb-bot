@@ -7,6 +7,8 @@ export interface BotConfig {
   autoEntryEnabled: boolean;
   autoExitEnabled: boolean;
   manualEntryEnabled: boolean;
+  /** When true, Min Execution Spread (Guard) % is enforced; when false, spread check is skipped. */
+  isEntryGuardEnabled?: boolean;
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
@@ -239,6 +241,24 @@ export function SettingsPanel() {
                         />
                       </button>
                     </label>
+                    <label className="flex cursor-pointer items-center justify-between gap-4">
+                      <span className="text-sm text-zinc-300">Entry Guard</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={c.isEntryGuardEnabled ?? true}
+                        onClick={() => toggle('isEntryGuardEnabled', !(c.isEntryGuardEnabled ?? true))}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                          (c.isEntryGuardEnabled ?? true) ? 'bg-electric' : 'bg-white/20'
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                            (c.isEntryGuardEnabled ?? true) ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </label>
                   </div>
                 </div>
 
@@ -308,7 +328,7 @@ export function SettingsPanel() {
                         onBlur={applyExecutionSpreadThresholdToBackend}
                         className="w-24 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-electric focus:outline-none focus:ring-1 focus:ring-electric"
                       />
-                      <p className="mt-0.5 text-xs text-zinc-500">Entry guard: trade only if orderbook spread &gt; this %.</p>
+                      <p className="mt-0.5 text-xs text-zinc-500">When Entry Guard is on: trade only if orderbook spread &gt; this %.</p>
                     </div>
                     <div>
                       <label className="mb-1 block text-sm text-zinc-300">Take Profit (ROI) %</label>

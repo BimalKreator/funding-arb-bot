@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, ChevronLeft, ChevronRight, TrendingUp, Circle } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, TrendingUp, Circle, ShieldCheck } from 'lucide-react';
 import type { ScreenerResultEntry, ScreenerResponse } from '../types/screener';
 import { API_BASE } from '../config';
 import { apiFetch } from '../api';
@@ -19,6 +19,8 @@ export interface BotConfig {
   capitalPercent: number;
   autoLeverage: number;
   screenerMinSpread: number;
+  /** Min execution spread % for Entry Guard (default 0.22). */
+  executionSpreadThreshold?: number;
   allowedFundingIntervals?: number[];
   maxActiveTrades?: number;
 }
@@ -96,6 +98,7 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
   const [banningSymbol, setBanningSymbol] = useState<string | null>(null);
 
   const minSpread = config?.screenerMinSpread ?? threshold;
+  const minExecutionSpread = config?.executionSpreadThreshold ?? 0.22;
 
   // Sync allowed intervals from config on load / poll
   useEffect(() => {
@@ -366,6 +369,17 @@ export const Screener: React.FC<ScreenerProps> = ({ threshold = 0 }) => {
                           {isNext && (
                             <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-400">
                               Next
+                            </span>
+                          )}
+                          {typeof row.executionSpread === 'number' &&
+                            Number.isFinite(row.executionSpread) &&
+                            row.executionSpread >= minExecutionSpread && (
+                            <span
+                              className="inline-flex items-center gap-0.5 rounded bg-green-500/20 px-1.5 py-0.5 text-xs font-medium text-green-400"
+                              title={`Execution Spread: ${row.executionSpread.toFixed(2)}% (Eligible)`}
+                            >
+                              <ShieldCheck className="h-3 w-3" />
+                              EGE
                             </span>
                           )}
                         </div>

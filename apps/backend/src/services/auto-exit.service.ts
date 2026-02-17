@@ -1,4 +1,5 @@
 import type { ConfigService } from './config.service.js';
+import type { ExchangeManager } from './exchange/index.js';
 import type { PositionService } from './position.service.js';
 import type { NotificationService } from './notification.service.js';
 import type { FundingService } from './funding.service.js';
@@ -50,7 +51,8 @@ export class AutoExitService {
     private readonly configService: ConfigService,
     private readonly positionService: PositionService,
     private readonly notificationService?: NotificationService,
-    private readonly fundingService?: FundingService
+    private readonly fundingService?: FundingService,
+    private readonly exchangeManager?: ExchangeManager
   ) {}
 
   start(): void {
@@ -91,31 +93,61 @@ export class AutoExitService {
         const hasBybit = legs.some((l) => l.exchange === 'bybit');
 
         if (hasBinance && !hasBybit) {
+          const exchangeId = 'binance';
+          const hasPending = this.exchangeManager ? await this.exchangeManager.hasOpenOrders(exchangeId, group.symbol) : false;
+          if (hasPending) {
+            console.log(`[Orphan Exit] Skipping because an exit order is already pending for ${group.symbol}.`);
+            continue;
+          }
           const binanceLeg = legs.find((l) => l.exchange === 'binance');
-          if (binanceLeg?.timestamp != null && now - binanceLeg.timestamp >= GRACE_PERIOD_MS) {
-            const reason = 'Orphan Position detected > 60s on Binance';
-            console.log(`[AutoExit] Auto-Exit triggered for ${group.symbol} on Binance (Orphan)`);
-            this.notificationService?.add(
-              'WARNING',
-              'Auto-Exit Triggered',
-              `${group.symbol}: ${reason}`,
-              { symbol: group.symbol, exchange: 'binance', reason }
-            );
-            await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Binance)');
+          const ts = binanceLeg?.timestamp;
+          const ageMs = ts != null ? now - ts : null;
+          const trigger = ts == null || (ageMs !== null && ageMs >= GRACE_PERIOD_MS);
+          if (ts == null) {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Binance only, timestamp missing; triggering exit.`);
+          } else if (!trigger) {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Binance only, age ${Math.round(ageMs! / 1000)}s < 60s, skipping.`);
+            continue;
+          } else {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Binance only, age ${Math.round(ageMs! / 1000)}s >= 60s, triggering exit.`);
           }
+          const reason = 'Orphan Position detected > 60s on Binance';
+          this.notificationService?.add(
+            'WARNING',
+            'Auto-Exit Triggered',
+            `${group.symbol}: ${reason}`,
+            { symbol: group.symbol, exchange: 'binance', reason }
+          );
+          const result = await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Binance)');
+          console.log(`[Orphan Exit] closePosition result for ${group.symbol}: closed=[${result.closed.join(', ')}], errors=[${result.errors.join(', ')}]`);
         } else if (hasBybit && !hasBinance) {
-          const bybitLeg = legs.find((l) => l.exchange === 'bybit');
-          if (bybitLeg?.timestamp != null && now - bybitLeg.timestamp >= GRACE_PERIOD_MS) {
-            const reason = 'Orphan Position detected > 60s on Bybit';
-            console.log(`[AutoExit] Auto-Exit triggered for ${group.symbol} on Bybit (Orphan)`);
-            this.notificationService?.add(
-              'WARNING',
-              'Auto-Exit Triggered',
-              `${group.symbol}: ${reason}`,
-              { symbol: group.symbol, exchange: 'bybit', reason }
-            );
-            await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Bybit)');
+          const exchangeId = 'bybit';
+          const hasPending = this.exchangeManager ? await this.exchangeManager.hasOpenOrders(exchangeId, group.symbol) : false;
+          if (hasPending) {
+            console.log(`[Orphan Exit] Skipping because an exit order is already pending for ${group.symbol}.`);
+            continue;
           }
+          const bybitLeg = legs.find((l) => l.exchange === 'bybit');
+          const ts = bybitLeg?.timestamp;
+          const ageMs = ts != null ? now - ts : null;
+          const trigger = ts == null || (ageMs !== null && ageMs >= GRACE_PERIOD_MS);
+          if (ts == null) {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Bybit only, timestamp missing; triggering exit.`);
+          } else if (!trigger) {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Bybit only, age ${Math.round(ageMs! / 1000)}s < 60s, skipping.`);
+            continue;
+          } else {
+            console.log(`[Orphan Exit] Orphan check: ${group.symbol} — Bybit only, age ${Math.round(ageMs! / 1000)}s >= 60s, triggering exit.`);
+          }
+          const reason = 'Orphan Position detected > 60s on Bybit';
+          this.notificationService?.add(
+            'WARNING',
+            'Auto-Exit Triggered',
+            `${group.symbol}: ${reason}`,
+            { symbol: group.symbol, exchange: 'bybit', reason }
+          );
+          const result = await this.positionService.closePosition(group.symbol, 'Auto-Exit: Orphan (Bybit)');
+          console.log(`[Orphan Exit] closePosition result for ${group.symbol}: closed=[${result.closed.join(', ')}], errors=[${result.errors.join(', ')}]`);
         }
       }
     } catch (err) {

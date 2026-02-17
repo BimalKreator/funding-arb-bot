@@ -2,14 +2,15 @@
   "autoEntryEnabled": false,
   "autoExitEnabled": true,
   "manualEntryEnabled": true,
+  "isEntryGuardEnabled": false,
   "capitalPercent": 0.1,
   "autoLeverage": 5,
   "screenerMinSpread": 0,
-  "executionSpreadThreshold": 0.22,
+  "executionSpreadThreshold": 0,
   "allowedFundingIntervals": [
     4,
     8
   ],
   "maxActiveTrades": 1,
-  "minTakeProfitPercent": 5
+  "minTakeProfitPercent": 0.01
 }

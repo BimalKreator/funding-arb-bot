@@ -16,6 +16,8 @@ export interface ScreenerResultEntry {
   binanceIntervalHours?: number;
   bybitIntervalHours?: number;
   fastExchange?: 'binance' | 'bybit';
+  /** Execution spread %: (Bid_Short - Ask_Long) / MarkPrice * 100. For Entry Guard eligibility. */
+  executionSpread?: number;
 }
 
 /** GET /api/screener response */

@@ -38,15 +38,5 @@
     "bybit": {
       "accumulatedFunding": 0
     }
-  },
-  "RPLUSDT": {
-    "nextFundingTime": 1771272000000,
-    "fundingIntervalHours": 4,
-    "binance": {
-      "accumulatedFunding": 0
-    },
-    "bybit": {
-      "accumulatedFunding": 0
-    }
   }
 }

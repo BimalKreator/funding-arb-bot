@@ -55,6 +55,11 @@ export interface ScreenerResultEntry {
   bybitIntervalHours?: number;
   /** Set only for mismatched-interval rows: the exchange with the smaller (fast) interval. */
   fastExchange?: 'binance' | 'bybit';
+  /**
+   * Execution spread %: (Bid_ShortExchange - Ask_LongExchange) / MarkPrice * 100.
+   * Used by frontend to show Entry Guard eligibility (compare to Min Execution Spread setting).
+   */
+  executionSpread?: number;
 }
 
 /** Response shape for GET /api/screener */

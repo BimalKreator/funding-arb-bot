@@ -123,7 +123,8 @@ export class BybitFuturesClient implements ExchangeService {
     });
   }
 
-  async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {
+  /** @param reduceOnly - true when closing (exit), false when opening (entry). Default true for backward compat. */
+  async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, reduceOnly: boolean = true): Promise<OrderResult> {
     if (!this.client) throw new Error('Bybit client not configured');
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid quantity for ${symbol}`);
     const qtyStr = this.formatQty(symbol, quantity);
@@ -134,7 +135,7 @@ export class BybitFuturesClient implements ExchangeService {
         side: side === 'BUY' ? 'Buy' : 'Sell',
         orderType: 'Market',
         qty: qtyStr,
-        reduceOnly: true,
+        reduceOnly,
       });
       if (orderRes.retCode !== 0) {
         const err = Object.assign(new Error(orderRes.retMsg ?? 'Order failed'), {
@@ -218,6 +219,50 @@ export class BybitFuturesClient implements ExchangeService {
     }
   }
 
+  /**
+   * Post-Only limit order (maker only). Uses timeInForce PostOnly.
+   * @param reduceOnly - true for closing positions (exit), false for opening (entry).
+   */
+  async placeLimitOrderPostOnly(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number,
+    reduceOnly: boolean = true
+  ): Promise<{ orderId: string }> {
+    if (!this.client) throw new Error('Bybit client not configured');
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`Invalid quantity/price for ${symbol}`);
+    }
+    const qtyStr = this.formatQty(symbol, quantity);
+    const priceStr = String(price);
+    try {
+      const orderRes = await this.client.submitOrder({
+        category: 'linear',
+        symbol,
+        side: side === 'BUY' ? 'Buy' : 'Sell',
+        orderType: 'Limit',
+        qty: qtyStr,
+        price: priceStr,
+        timeInForce: 'PostOnly',
+        reduceOnly,
+      });
+      if (orderRes.retCode !== 0) {
+        const err = Object.assign(new Error(orderRes.retMsg ?? 'PostOnly limit order failed'), {
+          retCode: orderRes.retCode,
+          retMsg: orderRes.retMsg,
+        });
+        this.onOrderError?.(symbol, err);
+        throw err;
+      }
+      const orderId = (orderRes.result as { orderId?: string })?.orderId ?? '';
+      return { orderId };
+    } catch (err: unknown) {
+      this.onOrderError?.(symbol, err);
+      throw err;
+    }
+  }
+
   async getOrderStatus(symbol: string, orderId: string): Promise<'FILLED' | 'OPEN' | 'PARTIALLY_FILLED' | 'CANCELED' | 'REJECTED' | 'EXPIRED'> {
     if (!this.client) throw new Error('Bybit client not configured');
     const res = await this.client.getActiveOrders({
@@ -241,6 +286,19 @@ export class BybitFuturesClient implements ExchangeService {
     if (!this.client) throw new Error('Bybit client not configured');
     const res = await this.client.cancelOrder({ category: 'linear', symbol, orderId });
     if (res.retCode !== 0) throw new Error(res.retMsg ?? 'Cancel order failed');
+  }
+
+  /** True if there is at least one OPEN/PENDING order for the symbol (e.g. exit in progress). */
+  async hasOpenOrders(symbol: string): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      const res = await this.client.getActiveOrders({ category: 'linear', symbol, limit: 1 });
+      if (res.retCode !== 0) return false;
+      const list = (res.result as { list?: unknown[] })?.list ?? [];
+      return list.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Total funding received for a symbol between startTime and endTime (ms). Unified Transaction Log. */

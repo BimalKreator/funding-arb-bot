@@ -2,6 +2,8 @@ import type { BannedSymbolsService } from './banned-symbols.service.js';
 import type { ConfigService } from './config.service.js';
 import type { FundingService } from './funding.service.js';
 import type { InstrumentService } from './InstrumentService.js';
+import type { ExchangeManager } from './exchange/index.js';
+import type { MarketDataService } from './market-data.service.js';
 import type { ScreenerResultEntry, ScreenerResponse } from '@funding-arb-bot/shared';
 import type { SymbolIntervalStatus } from '@funding-arb-bot/shared';
 import { ALLOWED_INTERVAL_OPTIONS } from './config.service.js';
@@ -13,13 +15,17 @@ const DEFAULT_THRESHOLD = 0;
  * Includes blacklisted tokens with isBlacklisted/blacklistedUntil so UI can show them.
  * User-banned symbols (manual ban) are excluded entirely and not returned.
  * Results are filtered by allowedFundingIntervals (config) and netSpread > 0.
+ * When ExchangeManager is provided, each entry is enriched with executionSpread % for Entry Guard display.
+ * When MarketDataService is provided, Binance (and Bybit when cached) book data is read from WS cache to avoid REST.
  */
 export class ScreenerService {
   constructor(
     private readonly fundingService: FundingService,
     private readonly instrumentService?: InstrumentService,
     private readonly bannedSymbolsService?: BannedSymbolsService,
-    private readonly configService?: ConfigService
+    private readonly configService?: ConfigService,
+    private readonly exchangeManager?: ExchangeManager,
+    private readonly marketDataService?: MarketDataService
   ) {}
 
   /**
@@ -47,7 +53,61 @@ export class ScreenerService {
         e.grossSpread > 0
     );
 
+    if (this.exchangeManager) {
+      await this.enrichExecutionSpread(standard);
+      await this.enrichExecutionSpread(mismatched);
+    }
+
     return { standard, mismatched };
+  }
+
+  /**
+   * Execution spread %: (Bid_ShortExchange - Ask_LongExchange) / MarkPrice * 100.
+   * Short exchange = where we sell (use best bid); Long exchange = where we buy (use best ask).
+   * Uses MarketDataService cache when available to avoid REST; falls back to ExchangeManager only for missing data.
+   */
+  private async enrichExecutionSpread(entries: ScreenerResultEntry[]): Promise<void> {
+    const markPriceFor = (e: ScreenerResultEntry): number => {
+      const bin = e.binanceMarkPrice;
+      const byb = e.bybitMarkPrice;
+      if (Number.isFinite(bin) && Number.isFinite(byb) && bin! > 0 && byb! > 0)
+        return (bin! + byb!) / 2;
+      return (Number.isFinite(bin) && bin! > 0 ? bin! : byb!) || 1;
+    };
+    await Promise.all(
+      entries.map(async (e) => {
+        try {
+          const cachedBinance = this.marketDataService?.getBinancePrice(e.symbol);
+          const cachedBybit = this.marketDataService?.getBybitPrice(e.symbol);
+          let binTop: { bestBid: number; bestAsk: number };
+          let bybTop: { bestBid: number; bestAsk: number };
+          if (cachedBinance && (cachedBinance.bestBid > 0 || cachedBinance.bestAsk > 0)) {
+            binTop = { bestBid: cachedBinance.bestBid, bestAsk: cachedBinance.bestAsk };
+          } else {
+            binTop = await this.exchangeManager!.getOrderbookTop('binance', e.symbol);
+          }
+          if (cachedBybit && (cachedBybit.bestBid > 0 || cachedBybit.bestAsk > 0)) {
+            bybTop = { bestBid: cachedBybit.bestBid, bestAsk: cachedBybit.bestAsk };
+          } else {
+            bybTop = await this.exchangeManager!.getOrderbookTop('bybit', e.symbol);
+          }
+          const bidShort =
+            e.binanceAction === 'SHORT' ? binTop.bestBid : bybTop.bestBid;
+          const askLong =
+            e.bybitAction === 'LONG' ? bybTop.bestAsk : binTop.bestAsk;
+          const markPrice = markPriceFor(e);
+          if (
+            Number.isFinite(bidShort) &&
+            Number.isFinite(askLong) &&
+            markPrice > 0
+          ) {
+            e.executionSpread = ((bidShort - askLong) / markPrice) * 100;
+          }
+        } catch {
+          // leave executionSpread undefined on orderbook fetch failure
+        }
+      })
+    );
   }
 
   private async getAllowedIntervalsSet(): Promise<Set<number>> {

@@ -18,6 +18,10 @@ export interface BybitInstrumentInfo {
 const instrumentsBySymbol = new Map<string, BybitInstrumentInfo>();
 const blacklistedUntil = new Map<string, number>();
 
+/** Exit cooldown: symbol -> timestamp (ms) until which entry is blocked. Default 5 min after orphan/failed exit. */
+const exitCooldownUntil = new Map<string, number>();
+const EXIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 /** Parse Bybit API string to number (e.g. lotSizeFilter.qtyStep). Uses parseFloat for correct numeric value. */
 function parseNum(s: string | undefined | null): number {
   if (s == null || s === '') return 0;
@@ -192,6 +196,25 @@ export class InstrumentService {
     if (until == null) return false;
     if (Date.now() >= until) {
       blacklistedUntil.delete(symbol);
+      return false;
+    }
+    return true;
+  }
+
+  /** Set symbol on exit cooldown (no new entry) for durationMs. Default 5 min. Call after orphan exit or failed parallel exit. */
+  setExitCooldown(symbol: string, durationMs: number = EXIT_COOLDOWN_MS): void {
+    const key = symbol.toUpperCase();
+    exitCooldownUntil.set(key, Date.now() + durationMs);
+    console.log(`[InstrumentService] Exit cooldown set for ${symbol} (${durationMs / 60_000} min).`);
+  }
+
+  /** True if symbol is on exit cooldown (do not open new position). */
+  isOnExitCooldown(symbol: string): boolean {
+    const key = symbol.toUpperCase();
+    const until = exitCooldownUntil.get(key);
+    if (until == null) return false;
+    if (Date.now() >= until) {
+      exitCooldownUntil.delete(key);
       return false;
     }
     return true;

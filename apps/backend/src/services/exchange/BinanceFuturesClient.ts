@@ -18,15 +18,58 @@ function toValidBalance(value: string | number | undefined | null, fallback: str
   return '0.00000000';
 }
 
+const DEFAULT_STEP_SIZE_BINANCE = 0.001;
+
+function getBinanceErrorMsg(res: unknown): string {
+  const r = res as { code?: number; msg?: string };
+  if (r?.msg) return String(r.msg);
+  if (r?.code != null) return `Code ${r.code}`;
+  return res instanceof Error ? res.message : String(res);
+}
+
+/** Extract Binance API error code from response or thrown error. */
+function getBinanceErrorCode(res: unknown): number | undefined {
+  const r = res as { code?: number; response?: { data?: { code?: number } } };
+  if (r?.code != null && Number.isFinite(r.code)) return r.code;
+  if (r?.response?.data?.code != null && Number.isFinite(r.response.data.code)) return r.response.data.code;
+  return undefined;
+}
+
+const BINANCE_POST_ONLY_TAKER_REJECT_CODE = -5022;
+
 export class BinanceFuturesClient implements ExchangeService {
   readonly id: ExchangeId = 'binance';
   private client: USDMClient | null = null;
+  private stepSizeCache = new Map<string, number>();
 
   constructor(options: { apiKey?: string; apiSecret?: string; testnet?: boolean }) {
     const { apiKey, apiSecret, testnet = false } = options;
     if (apiKey && apiSecret) {
       this.client = new USDMClient({ api_key: apiKey, api_secret: apiSecret, testnet });
     }
+  }
+
+  private async getStepSize(symbol: string): Promise<number> {
+    const cached = this.stepSizeCache.get(symbol);
+    if (cached != null && cached > 0) return cached;
+    const client = this.client ?? new USDMClient();
+    const info = await client.getExchangeInfo();
+    const symbols = (info as { symbols?: Array<{ symbol: string; filters?: Array<{ filterType?: string; stepSize?: string }> }> }).symbols ?? [];
+    const sym = symbols.find((s) => s.symbol === symbol);
+    const lotSize = sym?.filters?.find((f) => f.filterType === 'LOT_SIZE');
+    const step = lotSize?.stepSize != null ? parseFloat(String(lotSize.stepSize)) : DEFAULT_STEP_SIZE_BINANCE;
+    const stepSize = Number.isFinite(step) && step > 0 ? step : DEFAULT_STEP_SIZE_BINANCE;
+    this.stepSizeCache.set(symbol, stepSize);
+    return stepSize;
+  }
+
+  private async formatQty(symbol: string, quantity: number): Promise<string> {
+    const stepSize = await this.getStepSize(symbol);
+    const steps = Math.floor(quantity / stepSize + 1e-9);
+    const totalQty = steps * stepSize;
+    const stepDecimals = stepSize >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(stepSize)));
+    const fixed = totalQty.toFixed(stepDecimals);
+    return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') || fixed : fixed;
   }
 
   async fetchBalance(): Promise<UnifiedBalance[]> {
@@ -72,17 +115,32 @@ export class BinanceFuturesClient implements ExchangeService {
     await this.client.setLeverage({ symbol, leverage });
   }
 
-  async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult> {
+  /** @param reduceOnly - true when closing/reducing position (exit), false when opening (entry). Default true for backward compat. */
+  async placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, reduceOnly: boolean = true): Promise<OrderResult> {
     if (!this.client) throw new Error('Binance client not configured');
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid quantity for ${symbol}`);
-    const res = await this.client.submitNewOrder({
-      symbol,
-      side,
-      type: 'MARKET',
-      quantity,
-    });
-    const orderId = String((res as { orderId?: number }).orderId ?? '');
-    return { orderId, status: 'FILLED', exchangeId: 'binance' };
+    const qtyStr = await this.formatQty(symbol, quantity);
+    try {
+      const res = await this.client.submitNewOrder({
+        symbol,
+        side,
+        type: 'MARKET',
+        quantity: parseFloat(qtyStr),
+        reduceOnly: reduceOnly ? 'true' : 'false',
+      } as unknown as Parameters<USDMClient['submitNewOrder']>[0]);
+      const raw = res as { orderId?: number; code?: number; msg?: string };
+      if (raw.code != null && raw.code !== 0) {
+        const msg = getBinanceErrorMsg(raw);
+        console.error('[BinanceFuturesClient] placeOrder rejected:', msg);
+        throw new Error(msg);
+      }
+      const orderId = String(raw.orderId ?? '');
+      return { orderId, status: 'FILLED', exchangeId: 'binance' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : getBinanceErrorMsg(err);
+      console.error('[BinanceFuturesClient] placeOrder failed:', msg);
+      throw err;
+    }
   }
 
   /** Best bid (index 0) and best ask (index 0) from orderbook. For SELL use bestBid, for BUY use bestAsk. */
@@ -106,16 +164,104 @@ export class BinanceFuturesClient implements ExchangeService {
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
       throw new Error(`Invalid quantity/price for ${symbol}`);
     }
-    const res = await this.client.submitNewOrder({
-      symbol,
-      side,
-      type: 'LIMIT',
-      timeInForce: 'GTC',
-      quantity,
-      price,
-    });
-    const orderId = String((res as { orderId?: number }).orderId ?? '');
-    return { orderId };
+    const qtyStr = await this.formatQty(symbol, quantity);
+    const qtyNum = parseFloat(qtyStr);
+    try {
+      const res = await this.client.submitNewOrder({
+        symbol,
+        side,
+        type: 'LIMIT',
+        timeInForce: 'GTC',
+        quantity: qtyNum,
+        price,
+        reduceOnly: 'true',
+      } as unknown as Parameters<USDMClient['submitNewOrder']>[0]);
+      const raw = res as { orderId?: number; code?: number; msg?: string };
+      if (raw.code != null && raw.code !== 0) {
+        const msg = getBinanceErrorMsg(raw);
+        console.error('[BinanceFuturesClient] placeLimitOrder rejected:', msg);
+        throw new Error(msg);
+      }
+      const orderId = String(raw.orderId ?? '');
+      return { orderId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : getBinanceErrorMsg(err);
+      console.error('[BinanceFuturesClient] placeLimitOrder failed:', msg);
+      throw err;
+    }
+  }
+
+  /**
+   * Post-Only limit order (maker only). Uses GTX timeInForce when supported.
+   * On -5022 (order would execute as taker), retries once as standard GTC limit so the trade can fill.
+   * @param reduceOnly - true for closing positions (exit), false for opening (entry).
+   */
+  async placeLimitOrderPostOnly(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number,
+    reduceOnly: boolean = true
+  ): Promise<{ orderId: string }> {
+    if (!this.client) throw new Error('Binance client not configured');
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`Invalid quantity/price for ${symbol}`);
+    }
+    const qtyStr = await this.formatQty(symbol, quantity);
+    const qtyNum = parseFloat(qtyStr);
+    const reduceOnlyStr = reduceOnly ? 'true' : 'false';
+
+    // Retry as standard limit (may fill as taker). Preserve reduceOnly: entry=false, exit=true.
+    const submitStandardLimit = async (): Promise<{ orderId: string }> => {
+      const res = await this.client!.submitNewOrder({
+        symbol,
+        side,
+        type: 'LIMIT',
+        timeInForce: 'GTC',
+        quantity: qtyNum,
+        price,
+        reduceOnly: reduceOnlyStr,
+      } as unknown as Parameters<USDMClient['submitNewOrder']>[0]);
+      const raw = res as { orderId?: number; code?: number; msg?: string };
+      if (raw.code != null && raw.code !== 0) {
+        const msg = getBinanceErrorMsg(raw);
+        console.error('[BinanceFuturesClient] placeLimitOrder (GTC) rejected:', msg);
+        throw new Error(msg);
+      }
+      return { orderId: String(raw.orderId ?? '') };
+    };
+
+    try {
+      const res = await this.client.submitNewOrder({
+        symbol,
+        side,
+        type: 'LIMIT',
+        timeInForce: 'GTX',
+        quantity: qtyNum,
+        price,
+        reduceOnly: reduceOnlyStr,
+      } as unknown as Parameters<USDMClient['submitNewOrder']>[0]);
+      const raw = res as { orderId?: number; code?: number; msg?: string };
+      if (raw.code != null && raw.code !== 0) {
+        if (raw.code === BINANCE_POST_ONLY_TAKER_REJECT_CODE) {
+          console.warn('[BinanceFuturesClient] Post-Only failed (-5022), retrying as standard Limit Order...');
+          return submitStandardLimit();
+        }
+        const msg = getBinanceErrorMsg(raw);
+        console.error('[BinanceFuturesClient] placeLimitOrderPostOnly rejected:', msg);
+        throw new Error(msg);
+      }
+      const orderId = String(raw.orderId ?? '');
+      return { orderId };
+    } catch (err) {
+      if (getBinanceErrorCode(err) === BINANCE_POST_ONLY_TAKER_REJECT_CODE) {
+        console.warn('[BinanceFuturesClient] Post-Only failed (-5022), retrying as standard Limit Order...');
+        return submitStandardLimit();
+      }
+      const msg = err instanceof Error ? err.message : getBinanceErrorMsg(err);
+      console.error('[BinanceFuturesClient] placeLimitOrderPostOnly failed:', msg);
+      throw err;
+    }
   }
 
   async getOrderStatus(symbol: string, orderId: string): Promise<'FILLED' | 'OPEN' | 'PARTIALLY_FILLED' | 'CANCELED' | 'REJECTED' | 'EXPIRED'> {
@@ -132,6 +278,18 @@ export class BinanceFuturesClient implements ExchangeService {
   async cancelOrderById(symbol: string, orderId: string): Promise<void> {
     if (!this.client) throw new Error('Binance client not configured');
     await this.client.cancelOrder({ symbol, orderId: parseInt(orderId, 10) });
+  }
+
+  /** True if there is at least one OPEN/PENDING order for the symbol (e.g. exit in progress). */
+  async hasOpenOrders(symbol: string): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      const list = await this.client.getAllOpenOrders({ symbol });
+      const arr = Array.isArray(list) ? list : [];
+      return arr.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Total funding fee income for a symbol between startTime and endTime (ms). */

@@ -48,6 +48,30 @@ export interface ExecuteSplitOrderOptions {
   splitParts?: number;
   /** Ms to wait for each limit fill before cancel + market. */
   timeoutMs?: number;
+  /** 'chase' = post-only limit then 2s loop: cancel+replace if not filled; after maxChaseAttempts use market. */
+  mode?: 'default' | 'chase';
+  /** For mode 'chase': ms between status checks (default 2000). */
+  chaseTickMs?: number;
+  /** For mode 'chase': max cancel+replace attempts before market fallback (default 3). */
+  maxChaseAttempts?: number;
+  /** For mode 'chase': true = closing position (reduceOnly), false = opening (entry). */
+  reduceOnly?: boolean;
+}
+
+export interface ExecuteParallelChaseOptions {
+  symbol: string;
+  binanceSide: 'BUY' | 'SELL';
+  bybitSide: 'BUY' | 'SELL';
+  quantity: number;
+  /** true = exit (reduceOnly), false = entry. */
+  reduceOnly: boolean;
+  chaseTickMs?: number;
+  maxChaseAttempts?: number;
+}
+
+export interface ParallelChaseResult {
+  binanceOrder: OrderResult;
+  bybitOrder: OrderResult;
 }
 
 const DEFAULT_STEP_SIZE = 0.001;
@@ -141,20 +165,21 @@ export class ExchangeManager {
     await Promise.all(promises);
   }
 
-  /** Place a market order on the given exchange (quantity in base asset). */
+  /** Place a market order. reduceOnly: true = close/reduce (exit), false = open (entry). Default true. */
   async placeOrder(
     exchangeId: ExchangeId,
     symbol: string,
     side: 'BUY' | 'SELL',
-    quantity: number
+    quantity: number,
+    reduceOnly: boolean = true
   ): Promise<OrderResult> {
     const client = this.clients.get(exchangeId);
     if (!client) throw new Error(`Exchange ${exchangeId} not configured`);
     const trading = client as ExchangeService & {
-      placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<OrderResult>;
+      placeOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, reduceOnly?: boolean): Promise<OrderResult>;
     };
     if (typeof trading.placeOrder !== 'function') throw new Error(`${exchangeId} does not support placeOrder`);
-    return trading.placeOrder(symbol, side, quantity);
+    return trading.placeOrder(symbol, side, quantity, reduceOnly);
   }
 
   /** Best bid and best ask from orderbook. For SELL use bestBid, for BUY use bestAsk. */
@@ -188,6 +213,26 @@ export class ExchangeManager {
     return trading.placeLimitOrder(symbol, side, quantity, price);
   }
 
+  /** Place a post-only limit order (maker only); returns orderId. */
+  async placeLimitOrderPostOnly(
+    exchangeId: ExchangeId,
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    quantity: number,
+    price: number,
+    reduceOnly: boolean
+  ): Promise<{ orderId: string }> {
+    const client = this.clients.get(exchangeId);
+    if (!client) throw new Error(`Exchange ${exchangeId} not configured`);
+    const trading = client as ExchangeService & {
+      placeLimitOrderPostOnly?(symbol: string, side: 'BUY' | 'SELL', quantity: number, price: number, reduceOnly: boolean): Promise<{ orderId: string }>;
+    };
+    if (typeof trading.placeLimitOrderPostOnly !== 'function') {
+      throw new Error(`${exchangeId} does not support placeLimitOrderPostOnly`);
+    }
+    return trading.placeLimitOrderPostOnly(symbol, side, quantity, price, reduceOnly);
+  }
+
   /** Order status: FILLED, OPEN, PARTIALLY_FILLED, or CANCELED/REJECTED/EXPIRED. */
   async getOrderStatus(
     exchangeId: ExchangeId,
@@ -214,7 +259,7 @@ export class ExchangeManager {
     return trading.cancelOrderById(symbol, orderId);
   }
 
-  /** Split limit order: try limit in chunks, fallback to market if stuck. Used by TradeService and PositionService. */
+  /** Split limit order: try limit in chunks, fallback to market if stuck. Used by TradeService and PositionService. Supports mode: 'chase' for post-only limit chase. */
   async executeSplitOrder(
     exchangeId: ExchangeId,
     symbol: string,
@@ -223,6 +268,58 @@ export class ExchangeManager {
     markPrice: number,
     options?: ExecuteSplitOrderOptions
   ): Promise<OrderResult> {
+    const TICK_MS = options?.chaseTickMs ?? 2000;
+    const MAX_CHASE = options?.maxChaseAttempts ?? 3;
+    const reduceOnly = options?.reduceOnly ?? true;
+
+    if (options?.mode === 'chase') {
+      const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      let orderId: string | null = null;
+      let chaseAttempt = 0;
+      while (chaseAttempt <= MAX_CHASE) {
+        const top = await this.getOrderbookTop(exchangeId, symbol);
+        const price = side === 'SELL' ? top.bestBid : top.bestAsk;
+        if (!Number.isFinite(price) || price <= 0) {
+          return this.placeOrder(exchangeId, symbol, side, totalQuantity, reduceOnly);
+        }
+        if (orderId) {
+          try {
+            await this.cancelOrderById(exchangeId, symbol, orderId);
+          } catch {
+            // ignore
+          }
+        }
+        try {
+          const res = await this.placeLimitOrderPostOnly(exchangeId, symbol, side, totalQuantity, price, reduceOnly);
+          orderId = res.orderId;
+        } catch (err) {
+          if (chaseAttempt >= MAX_CHASE) {
+            console.log(`[ExchangeManager] Chase mode: post-only failed after ${MAX_CHASE} attempts, using market.`);
+            return this.placeOrder(exchangeId, symbol, side, totalQuantity, reduceOnly);
+          }
+          chaseAttempt++;
+          await sleep(TICK_MS);
+          continue;
+        }
+        await sleep(TICK_MS);
+        const status = await this.getOrderStatus(exchangeId, symbol, orderId);
+        if (status === 'FILLED') {
+          return { orderId, status: 'FILLED', exchangeId };
+        }
+        chaseAttempt++;
+        if (chaseAttempt > MAX_CHASE) {
+          console.log(`[ExchangeManager] Chase mode: not filled after ${MAX_CHASE} chases, using market.`);
+          try {
+            await this.cancelOrderById(exchangeId, symbol, orderId!);
+          } catch {
+            // ignore
+          }
+          return this.placeOrder(exchangeId, symbol, side, totalQuantity, reduceOnly);
+        }
+      }
+      return this.placeOrder(exchangeId, symbol, side, totalQuantity, reduceOnly);
+    }
+
     const SPLIT_PARTS = options?.splitParts ?? 3;
     const ORDER_TIMEOUT_MS = options?.timeoutMs ?? 2000;
     const MIN_CHUNK_NOTIONAL_USD = 10;
@@ -239,7 +336,7 @@ export class ExchangeManager {
       const { bestBid, bestAsk } = await this.getOrderbookTop(exchangeId, symbol);
       const price = side === 'SELL' ? bestBid : bestAsk;
       if (!Number.isFinite(price) || price <= 0) {
-        return this.placeOrder(exchangeId, symbol, side, qty);
+        return this.placeOrder(exchangeId, symbol, side, qty, reduceOnly);
       }
       const { orderId } = await this.placeLimitOrder(exchangeId, symbol, side, qty, price);
       await sleep(ORDER_TIMEOUT_MS);
@@ -250,7 +347,7 @@ export class ExchangeManager {
       } catch {
         // ignore
       }
-      return this.placeOrder(exchangeId, symbol, side, qty);
+      return this.placeOrder(exchangeId, symbol, side, qty, reduceOnly);
     };
 
     if (SPLIT_PARTS <= 1) {
@@ -280,7 +377,7 @@ export class ExchangeManager {
         const { bestBid, bestAsk } = await this.getOrderbookTop(exchangeId, symbol);
         const price = side === 'SELL' ? bestBid : bestAsk;
         if (!Number.isFinite(price) || price <= 0) {
-          const res = await this.placeOrder(exchangeId, symbol, side, remaining);
+          const res = await this.placeOrder(exchangeId, symbol, side, remaining, reduceOnly);
           return res;
         }
 
@@ -302,7 +399,7 @@ export class ExchangeManager {
           }
           const toMarket = totalQuantity - executedQty;
           if (toMarket > 0) {
-            await this.placeOrder(exchangeId, symbol, side, toMarket);
+            await this.placeOrder(exchangeId, symbol, side, toMarket, reduceOnly);
           }
           return { orderId: lastOrderId, status: 'FILLED', exchangeId };
         }
@@ -310,7 +407,7 @@ export class ExchangeManager {
         const toMarket = totalQuantity - executedQty;
         if (toMarket > 0) {
           try {
-            await this.placeOrder(exchangeId, symbol, side, toMarket);
+            await this.placeOrder(exchangeId, symbol, side, toMarket, reduceOnly);
           } catch (marketErr) {
             console.error(`[ExchangeManager] executeSplitOrder market fallback failed:`, marketErr);
           }
@@ -327,12 +424,158 @@ export class ExchangeManager {
         const notional = cleanRem * priceForCheck;
         if (Number.isFinite(notional) && notional >= MIN_CLEANUP_NOTIONAL_USD) {
           console.log(`[ExchangeManager] Force closing remaining dust: ${cleanRem}`);
-          await this.placeOrder(exchangeId, symbol, side, cleanRem);
+          await this.placeOrder(exchangeId, symbol, side, cleanRem, reduceOnly);
         }
       }
     }
 
     return { orderId: lastOrderId || 'split-done', status: 'FILLED', exchangeId };
+  }
+
+  /**
+   * Parallel Limit Chase: place post-only limits on both exchanges, monitor every tick.
+   * If price moves, cancel and replace. If one leg fills and the other doesn't, give the pending leg
+   * maxChaseAttempts chase attempts then market to ensure hedged.
+   */
+  async executeParallelChase(options: ExecuteParallelChaseOptions): Promise<ParallelChaseResult> {
+    const {
+      symbol,
+      binanceSide,
+      bybitSide,
+      quantity,
+      reduceOnly,
+      chaseTickMs = 2000,
+      maxChaseAttempts = 3,
+    } = options;
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const MAX_TICKS = 60;
+    let binanceOrderId: string | null = null;
+    let bybitOrderId: string | null = null;
+    let binanceFilled = false;
+    let bybitFilled = false;
+
+    const placeBothPostOnly = async (): Promise<void> => {
+      const [binTop, bybTop] = await Promise.all([
+        this.getOrderbookTop('binance', symbol),
+        this.getOrderbookTop('bybit', symbol),
+      ]);
+      const binPrice = binanceSide === 'SELL' ? binTop.bestBid : binTop.bestAsk;
+      const bybPrice = bybitSide === 'SELL' ? bybTop.bestBid : bybTop.bestAsk;
+      if (binanceOrderId) {
+        try {
+          await this.cancelOrderById('binance', symbol, binanceOrderId);
+        } catch {
+          // ignore
+        }
+      }
+      if (bybitOrderId) {
+        try {
+          await this.cancelOrderById('bybit', symbol, bybitOrderId);
+        } catch {
+          // ignore
+        }
+      }
+      if (Number.isFinite(binPrice) && binPrice > 0) {
+        const binRes = await this.placeLimitOrderPostOnly('binance', symbol, binanceSide, quantity, binPrice, reduceOnly);
+        binanceOrderId = binRes.orderId;
+      }
+      if (Number.isFinite(bybPrice) && bybPrice > 0) {
+        const bybRes = await this.placeLimitOrderPostOnly('bybit', symbol, bybitSide, quantity, bybPrice, reduceOnly);
+        bybitOrderId = bybRes.orderId;
+      }
+    };
+
+    await placeBothPostOnly();
+    for (let tick = 0; tick < MAX_TICKS; tick++) {
+      await sleep(chaseTickMs);
+      const [binStatus, bybStatus] = await Promise.all([
+        binanceOrderId ? this.getOrderStatus('binance', symbol, binanceOrderId) : Promise.resolve('FILLED' as const),
+        bybitOrderId ? this.getOrderStatus('bybit', symbol, bybitOrderId) : Promise.resolve('FILLED' as const),
+      ]);
+      if (binStatus === 'FILLED') binanceFilled = true;
+      if (bybStatus === 'FILLED') bybitFilled = true;
+
+      if (binanceFilled && bybitFilled) {
+        return {
+          binanceOrder: { orderId: binanceOrderId ?? 'chase', status: 'FILLED', exchangeId: 'binance' },
+          bybitOrder: { orderId: bybitOrderId ?? 'chase', status: 'FILLED', exchangeId: 'bybit' },
+        };
+      }
+
+      if (binanceFilled && !bybitFilled) {
+        console.log(`[ExchangeManager] Parallel Chase: Binance filled, chasing Bybit (${maxChaseAttempts} attempts) then market.`);
+        if (bybitOrderId) {
+          try {
+            await this.cancelOrderById('bybit', symbol, bybitOrderId);
+          } catch {
+            // ignore
+          }
+        }
+        const chaseOpts: ExecuteSplitOrderOptions = { mode: 'chase', chaseTickMs, maxChaseAttempts, reduceOnly };
+        try {
+          const bybRes = await this.executeSplitOrder('bybit', symbol, bybitSide, quantity, 0, chaseOpts);
+          return {
+            binanceOrder: { orderId: binanceOrderId ?? 'chase', status: 'FILLED', exchangeId: 'binance' },
+            bybitOrder: bybRes,
+          };
+        } catch (err) {
+          console.error('[ExchangeManager] Parallel Chase: Bybit chase failed, using market.', err);
+          const bybRes = await this.placeOrder('bybit', symbol, bybitSide, quantity, reduceOnly);
+          return {
+            binanceOrder: { orderId: binanceOrderId ?? 'chase', status: 'FILLED', exchangeId: 'binance' },
+            bybitOrder: bybRes,
+          };
+        }
+      }
+      if (!binanceFilled && bybitFilled) {
+        console.log(`[ExchangeManager] Parallel Chase: Bybit filled, chasing Binance (${maxChaseAttempts} attempts) then market.`);
+        if (binanceOrderId) {
+          try {
+            await this.cancelOrderById('binance', symbol, binanceOrderId);
+          } catch {
+            // ignore
+          }
+        }
+        const chaseOpts: ExecuteSplitOrderOptions = { mode: 'chase', chaseTickMs, maxChaseAttempts, reduceOnly };
+        try {
+          const binRes = await this.executeSplitOrder('binance', symbol, binanceSide, quantity, 0, chaseOpts);
+          return {
+            binanceOrder: binRes,
+            bybitOrder: { orderId: bybitOrderId ?? 'chase', status: 'FILLED', exchangeId: 'bybit' },
+          };
+        } catch (err) {
+          console.error('[ExchangeManager] Parallel Chase: Binance chase failed, using market.', err);
+          const binRes = await this.placeOrder('binance', symbol, binanceSide, quantity, reduceOnly);
+          return {
+            binanceOrder: binRes,
+            bybitOrder: { orderId: bybitOrderId ?? 'chase', status: 'FILLED', exchangeId: 'bybit' },
+          };
+        }
+      }
+
+      await placeBothPostOnly();
+    }
+
+    console.log('[ExchangeManager] Parallel Chase: max ticks reached, closing both with market.');
+    if (!binanceFilled && binanceOrderId) {
+      try {
+        await this.cancelOrderById('binance', symbol, binanceOrderId);
+      } catch {
+        // ignore
+      }
+    }
+    if (!bybitFilled && bybitOrderId) {
+      try {
+        await this.cancelOrderById('bybit', symbol, bybitOrderId);
+      } catch {
+        // ignore
+      }
+    }
+    const [binRes, bybRes] = await Promise.all([
+      binanceFilled ? Promise.resolve({ orderId: binanceOrderId ?? '', status: 'FILLED' as const, exchangeId: 'binance' as const }) : this.placeOrder('binance', symbol, binanceSide, quantity, reduceOnly),
+      bybitFilled ? Promise.resolve({ orderId: bybitOrderId ?? '', status: 'FILLED' as const, exchangeId: 'bybit' as const }) : this.placeOrder('bybit', symbol, bybitSide, quantity, reduceOnly),
+    ]);
+    return { binanceOrder: binRes, bybitOrder: bybRes };
   }
 
   /** Total funding received for a symbol across both exchanges between openTime and closeTime (ms). */
@@ -359,5 +602,16 @@ export class ExchangeManager {
     };
     if (typeof withPositions.getPositions !== 'function') return [];
     return withPositions.getPositions(symbol);
+  }
+
+  /** True if the exchange has any OPEN/PENDING orders for the symbol (e.g. exit in progress). */
+  async hasOpenOrders(exchangeId: ExchangeId, symbol: string): Promise<boolean> {
+    const client = this.clients.get(exchangeId);
+    if (!client) return false;
+    const withOrders = client as ExchangeService & {
+      hasOpenOrders?(symbol: string): Promise<boolean>;
+    };
+    if (typeof withOrders.hasOpenOrders !== 'function') return false;
+    return withOrders.hasOpenOrders(symbol);
   }
 }

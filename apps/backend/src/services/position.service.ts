@@ -1,4 +1,5 @@
 import type { ExchangeManager } from './exchange/index.js';
+import { getReadableErrorMessage } from './exchange/ExchangeManager.js';
 import type { FundingService } from './funding.service.js';
 import type { InstrumentService } from './InstrumentService.js';
 import { addClosedTrade } from './closed-trades.service.js';
@@ -6,6 +7,10 @@ import { takeAccumulatedFundingForSymbol } from './position-funding-store.js';
 
 const CLOSE_CHUNKS = 3;
 const CHUNK_TIMEOUT_MS = 2000;
+const CLOSE_RETRY_ATTEMPTS = 3;
+const USE_PARALLEL_CHASE_EXIT = true;
+const CHASE_TICK_MS = 2000;
+const CHASE_MAX_ATTEMPTS = 3;
 
 function formatQuantity(qty: number, stepSize: number): number {
   if (!Number.isFinite(qty) || qty <= 0) return 0;
@@ -67,6 +72,16 @@ export interface PositionGroup {
 
 const HEDGE_DUST = 1;
 const WINDOW_BEFORE_FUNDING_MS = 10 * 60 * 1000;
+
+/** True if the error is a reduce-only / position-zero style rejection (retry with reduceOnly: false). */
+function isReduceOnlyError(err: unknown): boolean {
+  const msg = getReadableErrorMessage(err).toLowerCase();
+  if (msg.includes('reduce-only') || msg.includes('reduce only')) return true;
+  if (msg.includes('position is zero') || msg.includes('cannot fix reduce-only')) return true;
+  const code = (err as { response?: { data?: { code?: number } } })?.response?.data?.code;
+  if (code === -5022) return true; // Binance: "Reduce only order is rejected"
+  return false;
+}
 
 /** Ms from now until next funding for a given interval (1h, 2h, 4h, or 8h). Uses UTC slot alignment. */
 function getMsUntilNextFundingForInterval(intervalHours: number): number {
@@ -257,11 +272,89 @@ export class PositionService {
     const pnl = (bin?.unrealizedPnl ?? 0) + (byb?.unrealizedPnl ?? 0);
     const roiPercent = margin > 0 ? (pnl / margin) * 100 : 0;
 
-    const chunkOpts = { splitParts: 1 as const, timeoutMs: CHUNK_TIMEOUT_MS };
     const closed: string[] = [];
     const errors: string[] = [];
     let binanceClosed = false;
     let bybitClosed = false;
+
+    if (size <= 0 || (!bin && !byb)) {
+      console.log(`[Orphan Exit] No position found for symbol ${symbol} (bin=${!!bin}, byb=${!!byb}, size=${size}).`);
+      return { closed: [], errors: ['No position found'] };
+    }
+
+    // Orphan: single leg only — close with market order; on reduce-only error retry with reduceOnly=false.
+    if ((bin && !byb) || (!bin && byb)) {
+      const exchangeId = bin ? 'binance' : 'bybit';
+      const leg = (bin ?? byb)!;
+      const closeSide = leg.side === 'LONG' ? 'SELL' : 'BUY';
+      const effectiveStep = this.getStepSize(symbol);
+      const qty = formatQuantity(leg.quantity, effectiveStep);
+      if (qty <= 0) {
+        console.log(`[Orphan Exit] Symbol ${symbol}: formatted qty is 0 on ${exchangeId}, skipping.`);
+        return { closed: [], errors: ['Invalid quantity'] };
+      }
+      console.log(`[Orphan Exit] Closing single leg on ${exchangeId} for ${symbol}, qty=${qty.toFixed(6)} (${reason}).`);
+      try {
+        await this.exchangeManager.placeOrder(exchangeId, symbol, closeSide, qty, true);
+        closed.push(exchangeId);
+        if (exchangeId === 'binance') binanceClosed = true;
+        else bybitClosed = true;
+      } catch (err) {
+        const msg = getReadableErrorMessage(err);
+        if (isReduceOnlyError(err)) {
+          const freshPositions = await this.exchangeManager.getPositions(exchangeId, symbol);
+          const currentSize = freshPositions[0]?.quantity ?? 0;
+          if (currentSize <= 0) {
+            console.log('[Orphan Exit] Position already closed (size=0), skipping reduceOnly=false retry.');
+            closed.push(exchangeId);
+            if (exchangeId === 'binance') binanceClosed = true;
+            else bybitClosed = true;
+          } else {
+            const retryQty = formatQuantity(currentSize, effectiveStep);
+            console.log('[Orphan Exit] Reduce-only error, retrying with reduceOnly=false (confirmed size>0):', msg);
+            try {
+              await this.exchangeManager.placeOrder(exchangeId, symbol, closeSide, retryQty, false);
+              closed.push(exchangeId);
+              if (exchangeId === 'binance') binanceClosed = true;
+              else bybitClosed = true;
+            } catch (retryErr) {
+              const retryMsg = getReadableErrorMessage(retryErr);
+              console.error('[Orphan Exit] Order rejected (retry with reduceOnly=false failed):', retryMsg);
+              errors.push(retryMsg);
+            }
+          }
+        } else {
+          console.error('[Orphan Exit] Order rejected:', msg);
+          errors.push(msg);
+        }
+      }
+      if (closed.length > 0) {
+        this.instrumentService?.setExitCooldown(symbol);
+      }
+      if (closed.length > 0 && size > 0) {
+        const accumulatedFunding = await takeAccumulatedFundingForSymbol(symbol);
+        let totalFundingReceived = 0;
+        try {
+          totalFundingReceived = await this.exchangeManager.getFundingBetween(symbol, openTime, closeTime);
+        } catch (_) {}
+        await addClosedTrade({
+          closedAt: new Date(closeTime).toISOString(),
+          symbol,
+          size: leg.quantity,
+          entryPrice: leg.entryPrice,
+          markPrice: leg.markPrice ?? leg.entryPrice,
+          exitPrice: markPrice,
+          pnl: leg.unrealizedPnl ?? 0,
+          roiPercent: margin > 0 ? ((leg.unrealizedPnl ?? 0) / margin) * 100 : 0,
+          margin: leg.collateral ?? 0,
+          reason,
+          exchangeFee: 0,
+          totalFundingReceived: totalFundingReceived || 0,
+          accumulatedFunding,
+        });
+      }
+      return { closed, errors };
+    }
 
     if (bin && byb && size > 0) {
       const effectiveStep = this.getStepSize(symbol);
@@ -269,16 +362,76 @@ export class PositionService {
       const binSide = bin.side === 'LONG' ? 'SELL' : 'BUY';
       const bybSide = byb.side === 'LONG' ? 'SELL' : 'BUY';
 
-      for (let i = 0; i < CLOSE_CHUNKS; i++) {
-        const isLastChunk = i === CLOSE_CHUNKS - 1;
-        const remainingSize = size - chunkSize * (CLOSE_CHUNKS - 1);
-        const chunkQty = isLastChunk
-          ? formatQuantity(remainingSize, effectiveStep)
-          : chunkSize;
-        if (chunkQty <= 0) continue;
-
+      if (USE_PARALLEL_CHASE_EXIT) {
         try {
-          const binanceOrder = this.exchangeManager.executeSplitOrder(
+          console.log(`[Exit] Parallel Limit Chase for ${symbol} (qty=${size.toFixed(6)})`);
+          await this.exchangeManager.executeParallelChase({
+            symbol,
+            binanceSide: binSide,
+            bybitSide: bybSide,
+            quantity: size,
+            reduceOnly: true,
+            chaseTickMs: CHASE_TICK_MS,
+            maxChaseAttempts: CHASE_MAX_ATTEMPTS,
+          });
+          closed.push('binance');
+          closed.push('bybit');
+        } catch (err) {
+          const msg = getReadableErrorMessage(err);
+          console.error('[PositionService] Parallel Chase exit failed:', msg);
+          if (isReduceOnlyError(err)) {
+            const [binPositions, bybPositions] = await Promise.all([
+              this.exchangeManager.getPositions('binance', symbol),
+              this.exchangeManager.getPositions('bybit', symbol),
+            ]);
+            const binSize = binPositions[0]?.quantity ?? 0;
+            const bybSize = bybPositions[0]?.quantity ?? 0;
+            if (binSize > 0) {
+              console.log('[Exit] Retrying Binance leg with market reduceOnly=false (confirmed size>0).');
+              try {
+                await this.exchangeManager.placeOrder('binance', symbol, binSide, formatQuantity(binSize, effectiveStep), false);
+                closed.push('binance');
+                binanceClosed = true;
+              } catch (binErr) {
+                console.error('[PositionService] Binance force-close failed:', getReadableErrorMessage(binErr));
+                errors.push(getReadableErrorMessage(binErr));
+              }
+            } else {
+              console.log('[Exit] Binance position already 0, skipping force-close.');
+            }
+            if (bybSize > 0) {
+              console.log('[Exit] Retrying Bybit leg with market reduceOnly=false (confirmed size>0).');
+              try {
+                await this.exchangeManager.placeOrder('bybit', symbol, bybSide, formatQuantity(bybSize, effectiveStep), false);
+                closed.push('bybit');
+                bybitClosed = true;
+              } catch (bybErr) {
+                console.error('[PositionService] Bybit force-close failed:', getReadableErrorMessage(bybErr));
+                errors.push(getReadableErrorMessage(bybErr));
+              }
+            } else {
+              console.log('[Exit] Bybit position already 0, skipping force-close.');
+            }
+            this.instrumentService?.setExitCooldown(symbol);
+          } else {
+            errors.push(msg);
+          }
+        }
+      } else {
+      const chunkOpts = { splitParts: 1 as const, timeoutMs: CHUNK_TIMEOUT_MS };
+      const executeChunk = async (): Promise<void> => {
+        for (let i = 0; i < CLOSE_CHUNKS; i++) {
+          const isLastChunk = i === CLOSE_CHUNKS - 1;
+          const remainingSize = size - chunkSize * (CLOSE_CHUNKS - 1);
+          const chunkQty = isLastChunk
+            ? formatQuantity(remainingSize, effectiveStep)
+            : chunkSize;
+          if (chunkQty <= 0) continue;
+
+          console.log(
+            `[Exit] Attempting Parallel Chunk ${i + 1}/${CLOSE_CHUNKS} for ${symbol} (qty=${chunkQty.toFixed(6)}) — Binance and Bybit`
+          );
+          const binancePromise = this.exchangeManager.executeSplitOrder(
             'binance',
             symbol,
             binSide,
@@ -286,7 +439,7 @@ export class PositionService {
             markPrice,
             chunkOpts
           );
-          const bybitOrder = this.exchangeManager.executeSplitOrder(
+          const bybitPromise = this.exchangeManager.executeSplitOrder(
             'bybit',
             symbol,
             bybSide,
@@ -294,24 +447,143 @@ export class PositionService {
             markPrice,
             chunkOpts
           );
-          await Promise.all([binanceOrder, bybitOrder]);
-          binanceClosed = true;
-          bybitClosed = true;
-        } catch (e) {
-          console.error(
-            `[PositionService] closePosition chunk ${i + 1} failed:`,
-            e instanceof Error ? e.message : e
-          );
-          errors.push(`Chunk ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
-          break;
-        }
+          const [binRes, bybRes] = await Promise.allSettled([binancePromise, bybitPromise]);
 
-        if (!isLastChunk) {
-          await new Promise((r) => setTimeout(r, 1000));
+          let binanceOk = binRes.status === 'fulfilled';
+          let bybitOk = bybRes.status === 'fulfilled';
+
+          if (binRes.status === 'fulfilled') {
+            console.log(`[Exit] Chunk ${i + 1}: Binance succeeded.`);
+            binanceClosed = true;
+          } else {
+            console.error(
+              `[Exit] Chunk ${i + 1}: Binance failed:`,
+              binRes.reason instanceof Error ? binRes.reason.message : binRes.reason
+            );
+            try {
+              await this.exchangeManager.executeSplitOrder(
+                'binance',
+                symbol,
+                binSide,
+                chunkQty,
+                markPrice,
+                chunkOpts
+              );
+              binanceOk = true;
+              binanceClosed = true;
+              console.log(`[Exit] Chunk ${i + 1}: Binance immediate retry succeeded.`);
+            } catch (retryErr) {
+              console.error(
+                `[Exit] Chunk ${i + 1}: Binance immediate retry failed:`,
+                retryErr instanceof Error ? retryErr.message : retryErr
+              );
+            }
+          }
+
+          if (bybRes.status === 'fulfilled') {
+            console.log(`[Exit] Chunk ${i + 1}: Bybit succeeded.`);
+            bybitClosed = true;
+          } else {
+            console.error(
+              `[Exit] Chunk ${i + 1}: Bybit failed:`,
+              bybRes.reason instanceof Error ? bybRes.reason.message : bybRes.reason
+            );
+            try {
+              await this.exchangeManager.executeSplitOrder(
+                'bybit',
+                symbol,
+                bybSide,
+                chunkQty,
+                markPrice,
+                chunkOpts
+              );
+              bybitOk = true;
+              bybitClosed = true;
+              console.log(`[Exit] Chunk ${i + 1}: Bybit immediate retry succeeded.`);
+            } catch (retryErr) {
+              console.error(
+                `[Exit] Chunk ${i + 1}: Bybit immediate retry failed:`,
+                retryErr instanceof Error ? retryErr.message : retryErr
+              );
+            }
+          }
+
+          if (binanceOk && bybitOk) {
+            if (!isLastChunk) await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
+
+          if (!binanceOk && !bybitOk) {
+            const binReason = binRes.status === 'rejected' ? binRes.reason : 'unknown';
+            const bybReason = bybRes.status === 'rejected' ? bybRes.reason : 'unknown';
+            console.error(
+              `[PositionService] closePosition chunk ${i + 1}: both legs failed after immediate retry. Binance: ${binReason instanceof Error ? binReason.message : binReason}; Bybit: ${bybReason instanceof Error ? bybReason.message : bybReason}`
+            );
+            errors.push(`Chunk ${i + 1}: both legs failed`);
+            return;
+          }
+
+          const retryFailedLeg = async (
+            exchangeId: 'binance' | 'bybit',
+            side: 'BUY' | 'SELL'
+          ): Promise<boolean> => {
+            for (let attempt = 1; attempt <= CLOSE_RETRY_ATTEMPTS; attempt++) {
+              try {
+                await this.exchangeManager.executeSplitOrder(
+                  exchangeId,
+                  symbol,
+                  side,
+                  chunkQty,
+                  markPrice,
+                  chunkOpts
+                );
+                if (exchangeId === 'binance') binanceClosed = true;
+                else bybitClosed = true;
+                return true;
+              } catch (err) {
+                console.error(
+                  `[PositionService] closePosition chunk ${i + 1} ${exchangeId} retry ${attempt}/${CLOSE_RETRY_ATTEMPTS}:`,
+                  err instanceof Error ? err.message : err
+                );
+                if (attempt === CLOSE_RETRY_ATTEMPTS) return false;
+                await new Promise((r) => setTimeout(r, 1000));
+              }
+            }
+            return false;
+          };
+
+          if (!binanceOk && bybitOk) {
+            const ok = await retryFailedLeg('binance', binSide);
+            if (!ok) {
+              console.error(
+                `[PositionService] CRITICAL UNHEDGED: Bybit closed chunk ${i + 1}, Binance failed after ${CLOSE_RETRY_ATTEMPTS} retries. ${symbol}`
+              );
+              errors.push(`Chunk ${i + 1}: Binance failed after retries (UNHEDGED)`);
+              return;
+            }
+            if (!isLastChunk) await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
+
+          if (binanceOk && !bybitOk) {
+            const ok = await retryFailedLeg('bybit', bybSide);
+            if (!ok) {
+              console.error(
+                `[PositionService] CRITICAL UNHEDGED: Binance closed chunk ${i + 1}, Bybit failed after ${CLOSE_RETRY_ATTEMPTS} retries. ${symbol}`
+              );
+              errors.push(`Chunk ${i + 1}: Bybit failed after retries (UNHEDGED)`);
+              return;
+            }
+            if (!isLastChunk) await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
         }
-      }
+      };
+
+      await executeChunk();
       if (binanceClosed) closed.push('binance');
       if (bybitClosed) closed.push('bybit');
+      }
     }
 
     if (closed.length > 0 && size > 0) {

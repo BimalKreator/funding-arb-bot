@@ -1,7 +1,8 @@
 import type { ExchangeId, OrderResult } from '@funding-arb-bot/shared';
 import type { ConfigService } from './config.service.js';
-import type { ExchangeManager, ExecuteSplitOrderOptions } from './exchange/index.js';
+import type { ExchangeManager, ExecuteSplitOrderOptions, ParallelChaseResult } from './exchange/index.js';
 import type { InstrumentService } from './InstrumentService.js';
+import type { MarketDataService } from './market-data.service.js';
 import type { NotificationService } from './notification.service.js';
 
 export interface ArbitrageStrategy {
@@ -23,6 +24,9 @@ const PROBE_PCT = 0.01;
 const PROBE_MIN_NOTIONAL_USD = 6;
 const ENTRY_CHUNKS = 3;
 const CHUNK_TIMEOUT_MS = 2000;
+const CHASE_TICK_MS = 2000;
+const CHASE_MAX_ATTEMPTS = 3;
+const USE_PARALLEL_CHASE_ENTRY = true;
 
 /** Round down quantity to exchange stepSize to avoid rejection. */
 function formatQuantity(qty: number, stepSize: number): number {
@@ -37,7 +41,8 @@ export class TradeService {
     private readonly exchangeManager: ExchangeManager,
     private readonly notificationService?: NotificationService,
     private readonly instrumentService?: InstrumentService,
-    private readonly configService?: ConfigService
+    private readonly configService?: ConfigService,
+    private readonly marketDataService?: MarketDataService
   ) {}
 
   /** Step size for symbol on exchange (Bybit from InstrumentService, Binance default). */
@@ -71,6 +76,9 @@ export class TradeService {
     if (this.instrumentService?.isBlacklisted(symbol)) {
       throw new Error(`Symbol ${symbol} is blacklisted (24h).`);
     }
+    if (this.instrumentService?.isOnExitCooldown(symbol)) {
+      throw new Error(`Symbol ${symbol} is on exit cooldown (5 min).`);
+    }
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error('Invalid quantity');
     }
@@ -102,24 +110,44 @@ export class TradeService {
       throw new Error(`Leverage Set Failed: ${message}`);
     }
 
-    const chunkOpts: ExecuteSplitOrderOptions = { splitParts: 1, timeoutMs: CHUNK_TIMEOUT_MS };
-
     // Enforce correct side per exchange (hedge: opposite sides on Binance vs Bybit).
     const binanceSide = strategy.binanceSide;
     const bybitSide = strategy.bybitSide;
 
-    // —— Real-Time Orderbook Profitability Check (before any order) ——
+    // —— Real-Time Orderbook Profitability Check (when Entry Guard enabled) ——
     const cfg = await this.configService?.getConfig();
+    const entryGuardEnabled = cfg?.isEntryGuardEnabled ?? true;
     const requiredSpread = cfg?.executionSpreadThreshold ?? 0.22;
 
-    const [binanceTop, bybitTop] = await Promise.all([
-      this.exchangeManager.getOrderbookTop('binance', symbol),
-      this.exchangeManager.getOrderbookTop('bybit', symbol),
-    ]);
-    const binanceBid = binanceTop.bestBid;
-    const binanceAsk = binanceTop.bestAsk;
-    const bybitBid = bybitTop.bestBid;
-    const bybitAsk = bybitTop.bestAsk;
+    // Prefer WebSocket cache (zero API weight); fallback to REST when cache empty or invalid (e.g. cold start or zeros).
+    const cached = this.marketDataService?.getMarketPrice(symbol) ?? { binance: null, bybit: null };
+    const isValidTicker = (t: { bestBid: number; bestAsk: number } | null): t is { bestBid: number; bestAsk: number } =>
+      t != null &&
+      Number.isFinite(t.bestBid) &&
+      Number.isFinite(t.bestAsk) &&
+      t.bestBid > 0 &&
+      t.bestAsk > 0;
+
+    let binanceBid: number;
+    let binanceAsk: number;
+    let bybitBid: number;
+    let bybitAsk: number;
+    if (isValidTicker(cached.binance)) {
+      binanceBid = cached.binance.bestBid;
+      binanceAsk = cached.binance.bestAsk;
+    } else {
+      const binanceTop = await this.exchangeManager.getOrderbookTop('binance', symbol);
+      binanceBid = binanceTop.bestBid;
+      binanceAsk = binanceTop.bestAsk;
+    }
+    if (isValidTicker(cached.bybit)) {
+      bybitBid = cached.bybit.bestBid;
+      bybitAsk = cached.bybit.bestAsk;
+    } else {
+      const bybitTop = await this.exchangeManager.getOrderbookTop('bybit', symbol);
+      bybitBid = bybitTop.bestBid;
+      bybitAsk = bybitTop.bestAsk;
+    }
 
     let sellPrice: number;
     let buyPrice: number;
@@ -139,19 +167,52 @@ export class TradeService {
     const spreadAmount = sellPrice - buyPrice;
     const spreadPercent = (spreadAmount / buyPrice) * 100;
 
-    console.log(
-      `[TradeService] Checking Entry Profitability: Sell @ ${sellPrice}, Buy @ ${buyPrice}, Spread: ${spreadPercent.toFixed(4)}%, Required: ${requiredSpread}%`
-    );
-    if (spreadPercent <= requiredSpread) {
+    // isEntryGuardEnabled ON: enforce min spread or abort. OFF: skip check and proceed regardless of spread.
+    if (entryGuardEnabled) {
       console.log(
-        `[TradeService] Entry Rejected: Realized spread ${spreadPercent.toFixed(4)}% is below cost threshold (${requiredSpread}%). Monitoring for better spread...`
+        `[TradeService] Checking Entry Profitability: Sell @ ${sellPrice}, Buy @ ${buyPrice}, Spread: ${spreadPercent.toFixed(4)}%, Required: ${requiredSpread}%`
       );
-      throw new Error(
-        `Entry Rejected: Realized spread ${spreadPercent.toFixed(4)}% is below cost threshold (${requiredSpread}%).`
+      if (spreadPercent <= requiredSpread) {
+        console.log(
+          `[TradeService] Entry Rejected: Realized spread ${spreadPercent.toFixed(4)}% is below cost threshold (${requiredSpread}%). Monitoring for better spread...`
+        );
+        throw new Error(
+          `Entry Rejected: Realized spread ${spreadPercent.toFixed(4)}% is below cost threshold (${requiredSpread}%).`
+        );
+      }
+    } else {
+      console.log(
+        `[TradeService] Entry Guard disabled — skipping spread check. Sell @ ${sellPrice}, Buy @ ${buyPrice}, Spread: ${spreadPercent.toFixed(4)}%`
       );
     }
 
-    // —— Step A: Probe (1% or $6 min) on Leg A then Leg B; rollback A if B fails ——
+    if (USE_PARALLEL_CHASE_ENTRY) {
+      // —— Parallel Limit Chase (post-only limits, 2s tick, chase then market if one leg lags) ——
+      console.log(`[TradeService] Entry via Parallel Limit Chase for ${symbol} (qty=${totalQty})`);
+      const chaseResult: ParallelChaseResult = await this.exchangeManager.executeParallelChase({
+        symbol,
+        binanceSide,
+        bybitSide,
+        quantity: totalQty,
+        reduceOnly: false,
+        chaseTickMs: CHASE_TICK_MS,
+        maxChaseAttempts: CHASE_MAX_ATTEMPTS,
+      });
+      this.notificationService?.add(
+        'SUCCESS',
+        'Trade Executed',
+        `${symbol} — Chase filled both legs.`,
+        { symbol, quantity: totalQty, binanceOrderId: chaseResult.binanceOrder.orderId, bybitOrderId: chaseResult.bybitOrder.orderId }
+      );
+      return {
+        success: true,
+        binanceOrder: chaseResult.binanceOrder,
+        bybitOrder: chaseResult.bybitOrder,
+      };
+    }
+
+    // —— Legacy: Probe then 3 chunks (limit then market) ——
+    const chunkOpts: ExecuteSplitOrderOptions = { splitParts: 1, timeoutMs: CHUNK_TIMEOUT_MS };
     const probeMinQty = price > 0 ? PROBE_MIN_NOTIONAL_USD / price : 0;
     const probeQtyRaw = Math.max(totalQty * PROBE_PCT, probeMinQty);
     const probeQty = Math.min(formatQuantity(probeQtyRaw, effectiveStep), totalQty);
@@ -194,7 +255,6 @@ export class TradeService {
       return { success: true, binanceOrder: { orderId: 'probe', status: 'FILLED', exchangeId: 'binance' }, bybitOrder: { orderId: 'probe', status: 'FILLED', exchangeId: 'bybit' } };
     }
 
-    // —— Step B: Ping-Pong 3 chunks (Leg A then Leg B per chunk) ——
     const chunkSize = formatQuantity(remainingQty / ENTRY_CHUNKS, effectiveStep);
     let lastBinanceOrderId = 'chunk';
     let lastBybitOrderId = 'chunk';
@@ -245,7 +305,7 @@ export class TradeService {
   ): Promise<void> {
     const counterSide = originalSide === 'BUY' ? 'SELL' : 'BUY';
     try {
-      await this.exchangeManager.placeOrder(exchangeId, symbol, counterSide, quantity);
+      await this.exchangeManager.placeOrder(exchangeId, symbol, counterSide, quantity, true /* reduceOnly: close */);
     } catch (err) {
       console.error(`Panic close failed on ${exchangeId}:`, err);
     }
@@ -305,13 +365,13 @@ export class TradeService {
           console.log(
             `Auto-Balancing ${symbol}: Increasing Binance by ${reduceQty} (notional $${rebalanceNotional.toFixed(2)}) to match Bybit.`
           );
-          await this.exchangeManager.placeOrder('binance', symbol, side, reduceQty);
+          await this.exchangeManager.placeOrder('binance', symbol, side, reduceQty, false /* reduceOnly: open/add */);
         } else if (bybitQty < binanceQty) {
           const side = bybitPos.side === 'LONG' ? 'BUY' : 'SELL';
           console.log(
             `Auto-Balancing ${symbol}: Increasing Bybit by ${reduceQty} (notional $${rebalanceNotional.toFixed(2)}) to match Binance.`
           );
-          await this.exchangeManager.placeOrder('bybit', symbol, side, reduceQty);
+          await this.exchangeManager.placeOrder('bybit', symbol, side, reduceQty, false /* reduceOnly: open/add */);
         } else {
           // Equal (shouldn't hit due to diff check)
         }
